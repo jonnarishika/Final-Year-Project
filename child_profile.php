@@ -548,7 +548,7 @@ $conn->close();
                         </div>
 
                         <?php if ($user_role === 'Sponsor'): ?>
-                            <a href="donate_placeholder.php?child_id=<?php echo $child_id; ?>" 
+                            <a href="sponser/sponsor_child.php?child_id=<?php echo $child_id; ?>"
                                class="donate-button">
                                 <span>Sponsor This Child</span>
                             </a>

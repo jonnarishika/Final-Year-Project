@@ -20,9 +20,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     
     // Validate age (must be between 0-18)
-    $age = date_diff(date_create($dob), date_create('today'))->y;
-    if ($age < 0 || $age > 18) {
-        $error = "Child age must be between 0-18 years.";
+    if (empty($error)) {
+        $age = date_diff(date_create($dob), date_create('today'))->y;
+        if ($age < 0 || $age > 18) {
+            $error = "Child age must be between 0-18 years.";
+        }
     }
     
     // File Upload Handling
@@ -34,9 +36,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     
     // Image Upload (Optional)
-    if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] === 0) {
+    if (empty($error) && isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] === UPLOAD_ERR_OK) {
         $image_tmp = $_FILES['profile_picture']['tmp_name'];
-        $image_ext = strtolower(pathinfo($_FILES['profile_picture']['name'], PATHINFO_EXTENSION));
+        $image_name_original = $_FILES['profile_picture']['name'];
+        $image_ext = strtolower(pathinfo($image_name_original, PATHINFO_EXTENSION));
         $allowed_image = ['jpg', 'jpeg', 'png', 'gif'];
         
         if (!in_array($image_ext, $allowed_image)) {
@@ -44,16 +47,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($_FILES['profile_picture']['size'] > 5000000) { // 5MB limit
             $error = "Image size must be less than 5MB.";
         } else {
-            $image_name = strtolower($first_name . '' . $last_name) . '' . time() . '.' . $image_ext;
-            $profile_picture = $upload_dir . $image_name;
-            move_uploaded_file($image_tmp, $profile_picture);
+            // Create unique filename
+            $image_name = strtolower(preg_replace('/[^a-z0-9]/', '', $first_name . $last_name)) . '_' . time() . '.' . $image_ext;
+            $upload_path = $upload_dir . $image_name;
+            
+            if (move_uploaded_file($image_tmp, $upload_path)) {
+                // Store relative path from web root for database
+                $profile_picture = 'uploads/children/' . $image_name;
+            } else {
+                $error = "Failed to upload profile picture.";
+            }
         }
     }
     
     // Video Upload (Optional)
-    if (isset($_FILES['profile_video']) && $_FILES['profile_video']['error'] === 0) {
+    if (empty($error) && isset($_FILES['profile_video']) && $_FILES['profile_video']['error'] === UPLOAD_ERR_OK) {
         $video_tmp = $_FILES['profile_video']['tmp_name'];
-        $video_ext = strtolower(pathinfo($_FILES['profile_video']['name'], PATHINFO_EXTENSION));
+        $video_name_original = $_FILES['profile_video']['name'];
+        $video_ext = strtolower(pathinfo($video_name_original, PATHINFO_EXTENSION));
         $allowed_video = ['mp4', 'avi', 'mov', 'wmv'];
         
         if (!in_array($video_ext, $allowed_video)) {
@@ -61,9 +72,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($_FILES['profile_video']['size'] > 50000000) { // 50MB limit
             $error = "Video size must be less than 50MB.";
         } else {
-            $video_name = strtolower($first_name . '' . $last_name) . '' . time() . '.' . $video_ext;
-            $profile_video = $upload_dir . $video_name;
-            move_uploaded_file($video_tmp, $profile_video);
+            // Create unique filename
+            $video_name = strtolower(preg_replace('/[^a-z0-9]/', '', $first_name . $last_name)) . '_' . time() . '.' . $video_ext;
+            $upload_path = $upload_dir . $video_name;
+            
+            if (move_uploaded_file($video_tmp, $upload_path)) {
+                // Store relative path from web root for database
+                $profile_video = 'uploads/children/' . $video_name;
+            } else {
+                $error = "Failed to upload profile video.";
+            }
         }
     }
     
@@ -86,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->execute()) {
             $success = "Child profile created successfully!";
             // Redirect after 2 seconds
-            header("refresh:2;url=view_children.php");
+            header("refresh:2;url=child_management.php");
         } else {
             $error = "Database error: " . $stmt->error;
         }
@@ -137,6 +155,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             0%, 100% { transform: translate(0, 0) rotate(0deg); }
             33% { transform: translate(30px, -30px) rotate(120deg); }
             66% { transform: translate(-20px, 20px) rotate(240deg); }
+        }
+        
+        .back-button {
+            position: relative;
+            z-index: 10;
+            margin-bottom: 20px;
+            display: inline-block;
+        }
+        
+        .back-button a {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 24px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(20px);
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 15px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .back-button a:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+        }
+        
+        .back-button a svg {
+            width: 20px;
+            height: 20px;
         }
         
         .container {
@@ -484,6 +537,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
     <div class="container">
+        <div class="back-button">
+            <a href="child_management.php">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Back to Children
+            </a>
+        </div>
+        
         <div class="glass-card">
             <div class="header">
                 <h1> Add New Child Profile</h1>
@@ -507,7 +569,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 <form method="POST" enctype="multipart/form-data" id="addChildForm">
                     <div class="form-grid">
-                        <div class="section-title"> Basic Information</div>
+                        <div class="section-title">Basic Information</div>
                         
                         <div class="form-group">
                             <label>First Name <span class="required">*</span></label>
@@ -559,9 +621,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <label>Profile Picture</label>
                             <div class="file-input-wrapper">
                                 <input type="file" name="profile_picture" id="profile_picture" 
-                                       accept="image/*" onchange="previewImage(event)">
+                                       accept="image/jpeg,image/jpg,image/png,image/gif" onchange="previewImage(event)">
                                 <label for="profile_picture" class="file-input-label">
-                                    <div class="icon">📷</div>
+                                    <div class="icon"></div>
                                     <div class="text">Choose Profile Picture</div>
                                     <div class="subtext">JPG, PNG, GIF (Max 5MB)</div>
                                 </label>
@@ -573,7 +635,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <label>Introduction Video</label>
                             <div class="file-input-wrapper">
                                 <input type="file" name="profile_video" id="profile_video" 
-                                       accept="video/*" onchange="previewVideo(event)">
+                                       accept="video/mp4,video/avi,video/quicktime,video/x-ms-wmv" onchange="previewVideo(event)">
                                 <label for="profile_video" class="file-input-label">
                                     <div class="icon">🎥</div>
                                     <div class="text">Choose Introduction Video</div>
@@ -589,9 +651,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <span></span>
                             <span>Create Child Profile</span>
                         </button>
-                        <a href="view_children.php" class="btn btn-secondary">
+                        <a href="child_management.php" class="btn btn-secondary">
                             <span>←</span>
-                            <span>Back to List</span>
+                            <span>Cancel</span>
                         </a>
                     </div>
                 </form>
@@ -605,9 +667,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const preview = document.getElementById('imagePreview');
             
             if (file) {
+                // Validate file type
+                const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+                if (!allowedTypes.includes(file.type)) {
+                    alert('Please select a valid image file (JPG, PNG, or GIF)');
+                    event.target.value = '';
+                    preview.style.display = 'none';
+                    return;
+                }
+                
+                // Validate file size (5MB)
+                if (file.size > 5000000) {
+                    alert('Image size must be less than 5MB');
+                    event.target.value = '';
+                    preview.style.display = 'none';
+                    return;
+                }
+                
                 const reader = new FileReader();
                 reader.onload = function(e) {
-                    preview.innerHTML = <img src="${e.target.result}" alt="Preview">;
+                    preview.innerHTML = `<img src="${e.target.result}" alt="Preview">`;
                     preview.style.display = 'block';
                 }
                 reader.readAsDataURL(file);
@@ -619,7 +698,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const preview = document.getElementById('videoPreview');
             
             if (file) {
-                preview.innerHTML = <p><span style="font-size: 20px;">✅</span> Video selected: <strong>${file.name}</strong></p>;
+                // Validate file type
+                const allowedTypes = ['video/mp4', 'video/avi', 'video/quicktime', 'video/x-ms-wmv'];
+                const fileExtension = file.name.split('.').pop().toLowerCase();
+                const allowedExtensions = ['mp4', 'avi', 'mov', 'wmv'];
+                
+                if (!allowedExtensions.includes(fileExtension)) {
+                    alert(' Please select a valid video file (MP4, AVI, MOV, or WMV)');
+                    event.target.value = '';
+                    preview.style.display = 'none';
+                    return;
+                }
+                
+                // Validate file size (50MB)
+                if (file.size > 50000000) {
+                    alert(' Video size must be less than 50MB');
+                    event.target.value = '';
+                    preview.style.display = 'none';
+                    return;
+                }
+                
+                const fileSizeMB = (file.size / 1000000).toFixed(2);
+                preview.innerHTML = `<p><span style="font-size: 20px;"></span> Video selected: <strong>${file.name}</strong> (${fileSizeMB} MB)</p>`;
                 preview.style.display = 'block';
             }
         }
@@ -635,7 +735,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             if (age < 0 || age > 18) {
                 e.preventDefault();
-                alert('⚠ Child age must be between 0-18 years.');
+                alert(' Child age must be between 0-18 years.');
+                return false;
             }
         });
     </script>
