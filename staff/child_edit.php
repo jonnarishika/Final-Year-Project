@@ -1,6 +1,7 @@
 <?php
 // child_edit.php
 // Staff page to edit child information
+// MODIFIED: Added Reports section and quick action buttons
 
 session_start();
 
@@ -44,7 +45,7 @@ $child = $result->fetch_assoc();
 $stmt->close();
 
 // Fetch documents for this child
-$doc_query = "SELECT * FROM child_uploads WHERE child_id = ? ORDER BY upload_id DESC";
+$doc_query = "SELECT * FROM child_uploads WHERE child_id = ? ORDER BY upload_date DESC";
 $doc_stmt = $conn->prepare($doc_query);
 $doc_stmt->bind_param('i', $child_id);
 $doc_stmt->execute();
@@ -54,6 +55,22 @@ while ($doc = $doc_result->fetch_assoc()) {
     $documents[] = $doc;
 }
 $doc_stmt->close();
+
+// Fetch reports for this child
+$report_query = "SELECT r.*, u.username as uploaded_by_name 
+                FROM child_reports r
+                LEFT JOIN users u ON r.uploaded_by = u.user_id
+                WHERE r.child_id = ? 
+                ORDER BY r.report_date DESC";
+$report_stmt = $conn->prepare($report_query);
+$report_stmt->bind_param('i', $child_id);
+$report_stmt->execute();
+$report_result = $report_stmt->get_result();
+$reports = [];
+while ($report = $report_result->fetch_assoc()) {
+    $reports[] = $report;
+}
+$report_stmt->close();
 
 // Helper function to calculate age
 function calculateAge($dob) {
@@ -74,6 +91,10 @@ $initials = getInitials($child['first_name'], $child['last_name']);
 require_once '../components/sidebar_config.php';
 $sidebar_menu = initSidebar('staff', 'child_management.php');
 $logout_path = '../signup_and_login/logout.php';
+
+// Check for success message
+$success_message = isset($_SESSION['success_message']) ? $_SESSION['success_message'] : '';
+unset($_SESSION['success_message']);
 ?>
 
 <!DOCTYPE html>
@@ -124,6 +145,21 @@ $logout_path = '../signup_and_login/logout.php';
             margin: 0 auto;
             position: relative;
             z-index: 1;
+        }
+
+        /* Success Alert */
+        .success-alert {
+            background: rgba(34, 197, 94, 0.2);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            border-radius: 12px;
+            padding: 16px 20px;
+            color: #dcfce7;
+            font-weight: 600;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         /* Back Button */
@@ -177,6 +213,48 @@ $logout_path = '../signup_and_login/logout.php';
         .page-header p {
             color: rgba(255, 255, 255, 0.9);
             font-size: 1.1rem;
+        }
+
+        /* Quick Actions Bar */
+        .quick-actions {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(10px);
+            padding: 20px 40px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 20px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            color: white;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .action-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+        }
+
+        .action-btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .action-btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
         }
 
         /* Main Grid Layout */
@@ -382,6 +460,72 @@ $logout_path = '../signup_and_login/logout.php';
             font-style: italic;
         }
 
+        /* Reports List */
+        .reports-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .report-item {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .report-item:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateX(4px);
+        }
+
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 12px;
+        }
+
+        .report-date {
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.7);
+            font-weight: 600;
+        }
+
+        .report-preview {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.95rem;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+
+        .report-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .view-report-btn {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .view-report-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
         /* Documents Grid */
         .documents-grid {
             display: grid;
@@ -525,7 +669,7 @@ $logout_path = '../signup_and_login/logout.php';
             backdrop-filter: blur(20px);
             border-radius: 20px;
             padding: 32px;
-            max-width: 500px;
+            max-width: 600px;
             width: 100%;
             max-height: 90vh;
             overflow-y: auto;
@@ -636,6 +780,22 @@ $logout_path = '../signup_and_login/logout.php';
             box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
         }
 
+        /* Report View Modal */
+        .report-modal-content {
+            max-width: 800px;
+        }
+
+        .report-full-text {
+            background: rgba(255, 255, 255, 0.5);
+            padding: 20px;
+            border-radius: 12px;
+            color: #2d3748;
+            line-height: 1.8;
+            font-size: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
         /* Responsive Design */
         @media (max-width: 1024px) {
             .main-grid {
@@ -674,6 +834,10 @@ $logout_path = '../signup_and_login/logout.php';
             .section-title {
                 font-size: 1.25rem;
             }
+
+            .quick-actions {
+                padding: 16px 20px;
+            }
         }
     </style>
 </head>
@@ -689,11 +853,30 @@ $logout_path = '../signup_and_login/logout.php';
             <span>Back to Children</span>
         </a>
 
+        <?php if (!empty($success_message)): ?>
+            <div class="success-alert">
+                <span>✅</span>
+                <span><?php echo htmlspecialchars($success_message); ?></span>
+            </div>
+        <?php endif; ?>
+
         <div class="glass-card">
             <!-- Page Header -->
             <div class="page-header">
                 <h1>Edit Child Profile</h1>
                 <p>Update information and documents</p>
+            </div>
+
+            <!-- Quick Actions Bar -->
+            <div class="quick-actions">
+                <a href="staff_add_report.php?child_id=<?php echo $child_id; ?>" class="action-btn action-btn-primary">
+                    <span>📊</span>
+                    <span>Add Progress Report</span>
+                </a>
+                <a href="staff_add_event.php?child_id=<?php echo $child_id; ?>" class="action-btn action-btn-primary">
+                    <span>📅</span>
+                    <span>Add Calendar Event</span>
+                </a>
             </div>
 
             <div class="main-grid">
@@ -774,6 +957,41 @@ $logout_path = '../signup_and_login/logout.php';
                                 <div class="empty-state">No aspirations provided yet</div>
                             <?php endif; ?>
                         </div>
+                    </div>
+
+                    <!-- Progress Reports Section (NEW) -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h2 class="section-title">Progress Reports</h2>
+                            <a href="staff_add_report.php?child_id=<?php echo $child_id; ?>" class="icon-btn" title="Add Report">+</a>
+                        </div>
+                        <?php if (count($reports) > 0): ?>
+                            <div class="reports-list">
+                                <?php foreach ($reports as $report): ?>
+                                    <div class="report-item">
+                                        <div class="report-header">
+                                            <div class="report-date">
+                                                <?php echo date('F j, Y', strtotime($report['report_date'])); ?>
+                                            </div>
+                                        </div>
+                                        <div class="report-preview">
+                                            <?php 
+                                            $preview = strip_tags($report['report_text']);
+                                            echo htmlspecialchars(substr($preview, 0, 150)) . (strlen($preview) > 150 ? '...' : ''); 
+                                            ?>
+                                        </div>
+                                        <div class="report-footer">
+                                            <span>By: <?php echo htmlspecialchars($report['uploaded_by_name'] ?? 'Staff'); ?></span>
+                                            <button class="view-report-btn" onclick="viewReport(<?php echo htmlspecialchars(json_encode($report)); ?>)">
+                                                View Full Report
+                                            </button>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php else: ?>
+                            <div class="empty-state">No progress reports yet. Click the + button to add one!</div>
+                        <?php endif; ?>
                     </div>
 
                     <!-- Documents Section -->
@@ -948,6 +1166,28 @@ $logout_path = '../signup_and_login/logout.php';
         </div>
     </div>
 
+    <!-- View Report Modal (NEW) -->
+    <div class="modal" id="reportViewModal">
+        <div class="modal-content report-modal-content">
+            <h3 class="modal-title" id="reportModalTitle">Progress Report</h3>
+            <div class="form-group">
+                <label class="form-label">Report Date</label>
+                <div id="reportModalDate" style="color: #4a5568; font-weight: 600;"></div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Report Content</label>
+                <div class="report-full-text" id="reportModalContent"></div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Created By</label>
+                <div id="reportModalAuthor" style="color: #4a5568; font-weight: 600;"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="modal-btn modal-btn-cancel" onclick="closeModal('reportViewModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const childId = <?php echo $child_id; ?>;
 
@@ -966,6 +1206,19 @@ $logout_path = '../signup_and_login/logout.php';
         function editAspiration() { openModal('aspirationModal'); }
         function uploadDocument() { openModal('uploadModal'); }
         function editProfileImage() { openModal('imageModal'); }
+
+        // View Report Function (NEW)
+        function viewReport(report) {
+            document.getElementById('reportModalTitle').textContent = 'Progress Report';
+            document.getElementById('reportModalDate').textContent = new Date(report.report_date).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            document.getElementById('reportModalContent').innerHTML = report.report_text.replace(/\n/g, '<br>');
+            document.getElementById('reportModalAuthor').textContent = report.uploaded_by_name || 'Staff';
+            openModal('reportViewModal');
+        }
 
         // Close modal when clicking outside
         document.querySelectorAll('.modal').forEach(modal => {
@@ -1144,7 +1397,7 @@ $logout_path = '../signup_and_login/logout.php';
                 const data = await response.json();
                 if (data.success) {
                     closeModal('uploadModal');
-                    alert('✅ Document uploaded successfully!');
+                    alert('✅ ' + data.message);
                     location.reload();
                 } else {
                     alert('❌ Error: ' + data.message);

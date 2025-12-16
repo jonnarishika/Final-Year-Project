@@ -4,6 +4,9 @@ use Razorpay\Api\Api;
 session_start();
 require_once __DIR__ . '/../db_config.php';
 
+// ⭐ NEW: Include fraud detection
+require_once __DIR__ . '/../includes/fraud/fraud_detector.php';
+
 // Check if sponsor is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../signup_and_login/login_template.php");
@@ -19,7 +22,19 @@ if (!isset($_GET['payment_id']) || !isset($_GET['order_id']) || !isset($_GET['si
 $payment_id = $_GET['payment_id'];
 $order_id = $_GET['order_id'];
 $signature = $_GET['signature'];
-$sponsor_id = $_SESSION['user_id'];
+$user_id = $_SESSION['user_id'];
+
+// ⭐ Get actual sponsor_id from sponsors table
+$stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$sponsor_data = $stmt->get_result()->fetch_assoc();
+
+if (!$sponsor_data) {
+    throw new Exception("Sponsor not found");
+}
+
+$sponsor_id = $sponsor_data['sponsor_id'];
 
 try {
     // Razorpay API credentials
@@ -148,7 +163,17 @@ try {
         $stmt->execute();
     }
     
-    // STEP 9: Success! Redirect to thank you page
+    // ⭐ STEP 9: RUN FRAUD DETECTION (FIXED!)
+    // Use sponsor_id directly from donation record (already verified at line 77)
+    error_log("=== FRAUD DETECTION START ===");
+    error_log("Sponsor ID: {$donation['sponsor_id']}");
+    error_log("Donation ID: {$donation['donation_id']}");
+    
+    runFraudDetection($donation['sponsor_id'], $donation['donation_id']);
+    
+    error_log("=== FRAUD DETECTION END ===");
+    
+    // STEP 10: Success! Redirect to thank you page
     header("Location: thank_you.php?donation_id=" . urlencode($final_donation_id));
     exit();
     

@@ -11,7 +11,7 @@ require_once __DIR__ . '/../db_config.php';
 
 $user_id = $_SESSION['user_id'];
 
-// Get sponsor_id from database
+// ✅ FIXED: Get sponsor_id from database for the logged-in user
 $query = "SELECT sponsor_id FROM sponsors WHERE user_id = ?";
 $stmt = $conn->prepare($query);
 $stmt->bind_param("i", $user_id);
@@ -26,12 +26,20 @@ $sponsor_data = $result->fetch_assoc();
 $sponsor_id = intval($sponsor_data['sponsor_id']);
 $stmt->close();
 
+// DEBUG: Log what sponsor_id we found
+error_log("========================================");
+error_log("SPONSORED CHILDREN PAGE");
+error_log("Logged in user_id: $user_id");
+error_log("Found sponsor_id: $sponsor_id");
+error_log("========================================");
+
 // Handle AJAX request for sponsored children data
 if (isset($_GET['action']) && $_GET['action'] === 'get_children') {
     header('Content-Type: application/json');
     
     try {
-        // Get sponsored children with details
+        // ✅ FIXED QUERY: Fetch children directly from children table where sponsor_id matches
+        // Also LEFT JOIN sponsorships to get history data if needed
         $children_query = "
             SELECT 
                 c.child_id,
@@ -40,31 +48,46 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_children') {
                 c.dob,
                 c.gender,
                 c.status,
+                c.sponsor_id,
+                TIMESTAMPDIFF(YEAR, c.dob, CURDATE()) as age,
                 s.start_date,
-                s.end_date,
-                TIMESTAMPDIFF(YEAR, c.dob, CURDATE()) as age
+                s.end_date
             FROM children c
-            INNER JOIN sponsorships s ON c.child_id = s.child_id
-            WHERE s.sponsor_id = ?
-            AND (s.end_date IS NULL OR s.end_date > CURDATE())
-            ORDER BY s.start_date DESC
+            LEFT JOIN sponsorships s ON c.child_id = s.child_id 
+                AND s.sponsor_id = ? 
+                AND (s.end_date IS NULL OR s.end_date > CURDATE())
+            WHERE c.sponsor_id = ?
+            ORDER BY c.first_name ASC
         ";
 
         $stmt = $conn->prepare($children_query);
-        $stmt->bind_param('i', $sponsor_id);
+        $stmt->bind_param('ii', $sponsor_id, $sponsor_id);
         $stmt->execute();
         $result = $stmt->get_result();
+        
+        error_log("Query executed. Found " . $result->num_rows . " children");
         
         $children = [];
         $active_count = 0;
         
         while ($row = $result->fetch_assoc()) {
+            error_log("Found child: {$row['first_name']} {$row['last_name']} (ID: {$row['child_id']})");
+            
             // Format dates
             $row['dob_formatted'] = date('F j, Y', strtotime($row['dob']));
-            $row['start_date_formatted'] = date('F j, Y', strtotime($row['start_date']));
+            
+            // If sponsorship history exists, use it; otherwise use current date
+            if (!empty($row['start_date'])) {
+                $row['start_date_formatted'] = date('F j, Y', strtotime($row['start_date']));
+                $start_date = $row['start_date'];
+            } else {
+                // If no start_date in sponsorships table, use a default or estimate
+                $row['start_date_formatted'] = 'Recently';
+                $start_date = date('Y-m-d'); // Use today as fallback
+            }
             
             // Calculate sponsorship duration
-            $start = new DateTime($row['start_date']);
+            $start = new DateTime($start_date);
             $now = new DateTime();
             $interval = $start->diff($now);
             
@@ -76,15 +99,17 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_children') {
                 if ($months > 0) {
                     $row['sponsorship_duration'] .= ', ' . $months . ' month' . ($months > 1 ? 's' : '');
                 }
-            } else {
+            } else if ($months > 0) {
                 $row['sponsorship_duration'] = $months . ' month' . ($months > 1 ? 's' : '');
+            } else {
+                $row['sponsorship_duration'] = 'Less than a month';
             }
             
             // Generate initials
             $row['initials'] = strtoupper(substr($row['first_name'], 0, 1) . substr($row['last_name'], 0, 1));
             
             // Count active sponsorships
-            if ($row['status'] === 'Active' || $row['status'] === 'active') {
+            if (strtolower($row['status']) === 'sponsored' || strtolower($row['status']) === 'active') {
                 $active_count++;
             }
             
@@ -97,6 +122,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_children') {
         // Calculate stats
         $total_count = count($children);
         
+        error_log("Returning $total_count children, $active_count active");
+        
         echo json_encode([
             'success' => true,
             'data' => $children,
@@ -108,6 +135,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_children') {
         exit();
         
     } catch (Exception $e) {
+        error_log("ERROR fetching children: " . $e->getMessage());
         echo json_encode([
             'success' => false,
             'message' => 'Error fetching children: ' . $e->getMessage()
@@ -235,6 +263,17 @@ $conn->close();
             color: #71717a;
             margin-top: 0.5rem;
             font-weight: 500;
+        }
+
+        /* Debug Info Box */
+        .debug-info {
+            background: rgba(59, 130, 246, 0.1);
+            border: 2px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
         }
 
         /* Stats Cards */
@@ -643,7 +682,9 @@ $conn->close();
         let currentFilter = 'all';
 
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('Loading children for sponsor:', SPONSOR_ID);
+            console.log('=================================');
+            console.log('🚀 Loading children for sponsor:', SPONSOR_ID);
+            console.log('=================================');
             fetchSponsoredChildren();
             setupEventListeners();
         });
@@ -658,8 +699,8 @@ $conn->close();
                 childrenGrid.style.display = 'none';
                 emptyState.style.display = 'none';
                 
-                console.log('Fetching children...');
-                // Call the same page with action parameter
+                console.log('📡 Fetching children for sponsor_id:', SPONSOR_ID);
+                
                 const response = await fetch(`sponsored_children.php?action=get_children&sponsor_id=${SPONSOR_ID}`);
                 
                 if (!response.ok) {
@@ -667,18 +708,25 @@ $conn->close();
                 }
                 
                 const result = await response.json();
-                console.log('Response:', result);
+                console.log('📦 API Response:', result);
                 
                 if (!result.success) {
                     throw new Error(result.message || 'Failed to fetch data');
                 }
                 
                 allChildren = result.data || [];
+                console.log('✅ Number of children found:', allChildren.length);
+                
+                if (allChildren.length > 0) {
+                    console.log('👶 Children:', allChildren.map(c => c.first_name + ' ' + c.last_name).join(', '));
+                }
+                
                 updateStatistics(result.stats);
                 
                 loadingState.style.display = 'none';
                 
                 if (allChildren.length === 0) {
+                    console.warn('⚠️ No children found for this sponsor');
                     emptyState.style.display = 'block';
                 } else {
                     childrenGrid.style.display = 'grid';
@@ -686,7 +734,7 @@ $conn->close();
                 }
                 
             } catch (error) {
-                console.error('Error fetching sponsored children:', error);
+                console.error('❌ ERROR fetching sponsored children:', error);
                 loadingState.style.display = 'none';
                 emptyState.style.display = 'block';
                 document.querySelector('.empty-title').textContent = 'Error Loading Data';
@@ -803,6 +851,7 @@ $conn->close();
                 console.error('Invalid child ID');
                 return;
             }
+            console.log('🔗 Navigating to child profile:', childId);
             window.location.href = `child_profile.php?child_id=${childId}`;
         }
     </script>

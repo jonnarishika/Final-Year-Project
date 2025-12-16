@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Event Notification - {{child_first_name}}</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
+    </style>
+    <![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f7fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    
+    <!-- Wrapper Table -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f7fa; padding: 20px 0;">
+        <tr>
+            <td align="center">
+                
+                <!-- Main Container -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    
+                    <!-- Header -->
+                    <tr>
+                        <td style="background-color: #ec4899; padding: 40px 30px; text-align: center; color: #ffffff;">
+                            <div style="font-size: 48px; margin-bottom: 10px;">&#127881;</div>
+                            <h1 style="margin: 0; font-size: 28px; font-weight: bold; color: #ffffff;">Exciting Event Coming Up!</h1>
+                            <p style="margin: 10px 0 0 0; font-size: 16px; color: #fce7f3;">Mark your calendar</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Body Content -->
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            
+                            <!-- Greeting -->
+                            <p style="margin: 0 0 20px 0; font-size: 18px; color: #1f2937; font-weight: 600;">
+                                Hi {{sponsor_name}},
+                            </p>
+                            
+                            <!-- Main Message -->
+                            <p style="margin: 0 0 25px 0; font-size: 16px; line-height: 1.6; color: #4b5563;">
+                                We have some exciting news to share with you!
+                                A special event is coming up for <strong style="color: #ec4899;">{{child_first_name}}</strong>,
+                                and we wanted to let you know so you can share in the excitement.
+                            </p>
+                            
+                            <!-- Event Card -->
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 30px 0;">
+                                <tr>
+                                    <td style="background: linear-gradient(135deg, #f472b6 0%, #ec4899 100%); padding: 30px; border-radius: 12px; text-align: center; color: #ffffff;">
+                                        
+                                        <!-- Child Info -->
+                                        <div style="font-size: 24px; font-weight: bold; margin-bottom: 15px; color: #ffffff;">
+                                            {{child_name}}
+                                        </div>
+                                        
+                                        <div style="font-size: 18px; margin: 10px 0; color: #ffffff;">
+                                            &#127882; {{event_title}}
+                                        </div>
+                                        
+                                        <div style="font-size: 18px; margin: 10px 0; color: #ffffff;">
+                                            &#128197; {{event_date}}
+                                        </div>
+                                        
+                                        <div style="font-size: 18px; margin: 10px 0; color: #ffffff;">
+                                            &#128205; Type: {{event_type}}
+                                        </div>
+                                        
+                                        <!-- Description -->
+                                        <div style="background-color: rgba(255, 255, 255, 0.2); padding: 20px; border-radius: 8px; margin: 20px 0;">
+                                            <div style="font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #ffffff;">
+                                                Event Details
+                                            </div>
+                                            <div style="font-size: 15px; line-height: 1.6; color: #ffffff;">
+                                                {{event_description}}
+                                            </div>
+                                        </div>
+                                        
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Additional Message -->
+                            <p style="margin: 0 0 25px 0; font-size: 16px; line-height: 1.6; color: #4b5563;">
+                                This is a wonderful opportunity for {{child_first_name}} to learn, grow, and create
+                                lasting memories. We'll share photos and updates after the event so you can see
+                                all the special moments! If you'd like to send your best wishes, just mail us back.
+                            </p>
+                            
+                            <!-- Divider -->
+                            <div style="height: 1px; background-color: #e5e7eb; margin: 30px 0;"></div>
+                            
+                            <!-- Thank You Note -->
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="background-color: #f9fafb; padding: 20px; border-radius: 8px; text-align: center;">
+                                        <p style="margin: 0; font-size: 16px; color: #ec4899; font-weight: 600;">
+                                            &#128153; Stay Connected!
+                                        </p>
+                                        <p style="margin: 10px 0 0 0; font-size: 14px; color: #6b7280;">
+                                            Keep an eye out for updates and photos from this special event.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #1f2937; padding: 30px; text-align: center; color: #9ca3af;">
+                            <p style="margin: 0 0 5px 0; font-size: 16px; font-weight: 600; color: #ffffff;">
+                                {{ngo_name}}
+                            </p>
+                            <p style="margin: 10px 0 20px 0; font-size: 14px; color: #d1d5db;">
+                                Creating memorable moments together.
+                            </p>
+                            <p style="margin: 0; font-size: 12px; color: #9ca3af;">
+                                <a href="{{unsubscribe_link}}" style="color: #ec4899; text-decoration: none;">
+                                    Unsubscribe from notifications
+                                </a>
+                            </p>
+                        </td>
+                    </tr>
+                    
+                </table>
+                <!-- End Main Container -->
+                
+            </td>
+        </tr>
+    </table>
+    <!-- End Wrapper -->
+    
+</body>
+</html>

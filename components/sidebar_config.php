@@ -43,6 +43,11 @@ function getSidebarMenu($menu_type, $current_page = '') {
                         'active' => ($current_page === 'owner_home.php')
                     ],
                     [
+                        'label' => 'Calendar',
+                        'url' => $basePath . 'staff/staff_calendar.php',
+                        'active' => ($current_page === 'staff_calendar.php')
+                    ],
+                    [
                         'label' => 'Fraud Management',
                         'url' => $basePath . 'owner/fraud.php',
                         'active' => ($current_page === 'fraud.php')
@@ -54,8 +59,8 @@ function getSidebarMenu($menu_type, $current_page = '') {
                 'items' => [
                     [
                         'label' => 'Children',
-                        'url' => $basePath . 'owner/child.php',
-                        'active' => ($current_page === 'child.php')
+                        'url' => $basePath . 'staff/child_management.php',
+                        'active' => ($current_page === 'child_management.php')
                     ],
                     [
                         'label' => 'Donors',
@@ -84,6 +89,11 @@ function getSidebarMenu($menu_type, $current_page = '') {
                         'label' => 'Dashboard',
                         'url' => $basePath . 'staff/staff_home_old.php',
                         'active' => ($current_page === 'staff_home_old.php')
+                    ],
+                    [
+                        'label' => 'Calendar',
+                        'url' => $basePath . 'staff/staff_calendar.php',
+                        'active' => ($current_page === 'staff_calendar.php')
                     ]
                 ]
             ],
@@ -198,3 +208,4 @@ function initSidebar($menu_type, $current_page = '') {
     
     return getSidebarMenu($menu_type, $current_page);
 }
+?>

@@ -1,6 +1,7 @@
 <?php
 // handle_child_updates.php
 // Single endpoint to handle ALL child updates: info, profile picture, and documents
+// MODIFIED: Added email triggers for Achievement uploads
 
 session_start();
 header('Content-Type: application/json');
@@ -19,6 +20,7 @@ if ($user_role !== 'staff' && $user_role !== 'owner') {
 }
 
 require_once '../db_config.php';
+require_once '../email_system/class.EmailSender.php';
 
 // Determine the action type
 $action = isset($_POST['action']) ? $_POST['action'] : (isset($_GET['action']) ? $_GET['action'] : null);
@@ -169,7 +171,7 @@ try {
             break;
             
         
-        // ========== UPLOAD DOCUMENT ==========
+        // ========== UPLOAD DOCUMENT (WITH EMAIL TRIGGER FOR ACHIEVEMENTS) ==========
         case 'upload_document':
             if (!isset($_FILES['document']) || !isset($_POST['child_id']) || !isset($_POST['category'])) {
                 echo json_encode(['success' => false, 'message' => 'Missing required parameters']);
@@ -180,6 +182,7 @@ try {
             $category = trim($_POST['category']);
             $file = $_FILES['document'];
             $uploaded_by = $_SESSION['user_id'];
+            $description = isset($_POST['description']) ? trim($_POST['description']) : '';
             
             // Validate file type
             $allowed_types = [
@@ -217,15 +220,74 @@ try {
             
             // Move uploaded file
             if (move_uploaded_file($file['tmp_name'], $filepath)) {
-                // Insert into database (without uploaded_at since it doesn't exist)
-                $stmt = $conn->prepare("INSERT INTO child_uploads (child_id, category, file_path, uploaded_by) VALUES (?, ?, ?, ?)");
+                // Insert into database
+                $stmt = $conn->prepare("INSERT INTO child_uploads (child_id, category, file_path, uploaded_by, upload_date) VALUES (?, ?, ?, ?, NOW())");
                 $stmt->bind_param('issi', $child_id, $category, $db_path, $uploaded_by);
                 
                 if ($stmt->execute()) {
+                    $upload_id = $stmt->insert_id;
+                    
+                    // ===== EMAIL TRIGGER: Send achievement email if category is "Achievement" =====
+                    if (strtolower($category) === 'achievement') {
+                        try {
+                            // Get child details
+                            $child_query = "SELECT * FROM children WHERE child_id = ?";
+                            $child_stmt = $conn->prepare($child_query);
+                            $child_stmt->bind_param('i', $child_id);
+                            $child_stmt->execute();
+                            $child_result = $child_stmt->get_result();
+                            
+                            if ($child_result->num_rows > 0) {
+                                $child = $child_result->fetch_assoc();
+                                
+                                // Get all active sponsors for this child
+                                $sponsor_query = "SELECT s.user_id, s.first_name, s.last_name, u.email 
+                                                FROM sponsors s
+                                                INNER JOIN users u ON s.user_id = u.user_id
+                                                INNER JOIN sponsorships sp ON s.sponsor_id = sp.sponsor_id
+                                                WHERE sp.child_id = ? 
+                                                AND sp.end_date IS NULL
+                                                AND u.user_role = 'Sponsor'";
+                                
+                                $sponsor_stmt = $conn->prepare($sponsor_query);
+                                $sponsor_stmt->bind_param('i', $child_id);
+                                $sponsor_stmt->execute();
+                                $sponsor_result = $sponsor_stmt->get_result();
+                                
+                                // Initialize email sender
+                                $emailSender = new EmailSender();
+                                
+                                // Prepare achievement data
+                                $achievement = [
+                                    'upload_id' => $upload_id,
+                                    'description' => $description ?: 'A new achievement has been added!',
+                                    'upload_date' => date('Y-m-d')
+                                ];
+                                
+                                // Send email to each sponsor
+                                $emails_sent = 0;
+                                while ($sponsor = $sponsor_result->fetch_assoc()) {
+                                    $success = $emailSender->sendAchievementEmail($sponsor, $child, $achievement);
+                                    if ($success) {
+                                        $emails_sent++;
+                                    }
+                                }
+                                
+                                $sponsor_stmt->close();
+                            }
+                            
+                            $child_stmt->close();
+                        } catch (Exception $e) {
+                            // Log error but don't fail the upload
+                            error_log("Achievement email sending failed: " . $e->getMessage());
+                        }
+                    }
+                    // ===== END EMAIL TRIGGER =====
+                    
                     echo json_encode([
                         'success' => true, 
-                        'message' => 'Document uploaded successfully',
-                        'upload_id' => $stmt->insert_id,
+                        'message' => 'Document uploaded successfully' . ($category === 'Achievement' ? ' and sponsors notified!' : ''),
+                        'upload_id' => $upload_id,
                         'path' => $db_path,
                         'category' => $category
                     ]);

@@ -1,41 +1,43 @@
 <?php
 // child_management.php
+// Staff page to manage children - view all children and add new ones
+
 session_start();
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['role'])) {
-    header('Location: login.php');
+    header('Location: ../signup_and_login/login.php');
     exit();
 }
 
-// Check role
-$user_role = strtolower($_SESSION['role']);
+// Check role - handle both uppercase and lowercase
+$user_role = strtolower($_SESSION['role']); // Convert to lowercase for comparison
 if ($user_role !== 'staff' && $user_role !== 'owner') {
-    header('Location: login.php');
+    header('Location: ../signup_and_login/login.php');
     exit();
 }
 
-// Include database configuration
+// Include database connection
 require_once '../db_config.php';
 
-// Handle filters
+// Handle filters from GET parameters
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 $age_range = isset($_GET['age_range']) ? $_GET['age_range'] : '';
 $sort = isset($_GET['sort']) ? $_GET['sort'] : 'name_asc';
 
-// Build SQL query
-$sql = "SELECT * FROM children WHERE 1=1";
+// Build WHERE clause
+$where_clauses = [];
 $params = [];
-$types = "";
+$types = '';
 
-// Search filter
+// Search by name
 if (!empty($search)) {
-    $sql .= " AND (first_name LIKE ? OR last_name LIKE ? OR CONCAT(first_name, ' ', last_name) LIKE ?)";
-    $searchParam = '%' . $search . '%';
-    $params[] = $searchParam;
-    $params[] = $searchParam;
-    $params[] = $searchParam;
-    $types .= "sss";
+    $where_clauses[] = "(LOWER(first_name) LIKE LOWER(?) OR LOWER(last_name) LIKE LOWER(?) OR LOWER(CONCAT(first_name, ' ', last_name)) LIKE LOWER(?))";
+    $search_param = '%' . $search . '%';
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $types .= 'sss';
 }
 
 // Age range filter
@@ -45,49 +47,62 @@ if (!empty($age_range)) {
         $min_age = intval($age_parts[0]);
         $max_age = intval($age_parts[1]);
         
-        // Calculate date range for age filter
-        $max_date = date('Y-m-d', strtotime("-$min_age years"));
-        $min_date = date('Y-m-d', strtotime("-" . ($max_age + 1) . " years"));
+        $today = new DateTime();
+        $max_birth_date = (clone $today)->modify("-" . ($max_age + 1) . " years")->modify("+1 day")->format('Y-m-d');
+        $min_birth_date = (clone $today)->modify("-{$min_age} years")->format('Y-m-d');
         
-        $sql .= " AND dob BETWEEN ? AND ?";
-        $params[] = $min_date;
-        $params[] = $max_date;
-        $types .= "ss";
+        $where_clauses[] = "(dob >= ? AND dob <= ?)";
+        $params[] = $max_birth_date;
+        $params[] = $min_birth_date;
+        $types .= 'ss';
     }
 }
 
-// Sort
+// Build ORDER BY clause
+$order_by = "first_name ASC, last_name ASC";
 switch ($sort) {
     case 'name_asc':
-        $sql .= " ORDER BY first_name ASC, last_name ASC";
+        $order_by = "first_name ASC, last_name ASC";
         break;
     case 'name_desc':
-        $sql .= " ORDER BY first_name DESC, last_name DESC";
+        $order_by = "first_name DESC, last_name DESC";
         break;
     case 'age_asc':
-        $sql .= " ORDER BY dob DESC";
+        $order_by = "dob DESC";
         break;
     case 'age_desc':
-        $sql .= " ORDER BY dob ASC";
+        $order_by = "dob ASC";
         break;
     case 'newest':
-        $sql .= " ORDER BY created_at DESC";
+        $order_by = "created_at DESC";
         break;
-    default:
-        $sql .= " ORDER BY first_name ASC, last_name ASC";
 }
 
-// Prepare and execute query
-$stmt = $conn->prepare($sql);
+// Build and execute query
+$where_sql = count($where_clauses) > 0 ? implode(' AND ', $where_clauses) : '1=1';
+$query = "SELECT child_id, first_name, last_name, dob, gender, profile_picture, status, about_me, aspiration, created_at 
+          FROM children 
+          WHERE {$where_sql} 
+          ORDER BY {$order_by}";
 
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
+$stmt = $conn->prepare($query);
+
+if (!$stmt) {
+    die("Query preparation failed: " . $conn->error);
+}
+
+// Bind parameters if any
+if (!empty($types)) {
+    $bind_names = [$types];
+    for ($i = 0; $i < count($params); $i++) {
+        $bind_names[] = &$params[$i];
+    }
+    call_user_func_array([$stmt, 'bind_param'], $bind_names);
 }
 
 $stmt->execute();
 $result = $stmt->get_result();
 
-// Fetch all children
 $children = [];
 while ($row = $result->fetch_assoc()) {
     $children[] = $row;
@@ -95,6 +110,7 @@ while ($row = $result->fetch_assoc()) {
 
 $stmt->close();
 
+// Calculate age helper function
 function calculateAge($dob) {
     $birthDate = new DateTime($dob);
     $today = new DateTime();
@@ -102,14 +118,17 @@ function calculateAge($dob) {
     return $age;
 }
 
+// Get initials helper function
 function getInitials($firstName, $lastName) {
     return strtoupper(substr($firstName, 0, 1) . substr($lastName, 0, 1));
 }
 
-function formatDate($dateString) {
-    return date('F d, Y', strtotime($dateString));
-}
+// Include sidebar configuration
+require_once '../components/sidebar_config.php';
+$sidebar_menu = initSidebar('staff', 'child_management.php');
+$logout_path = '../signup_and_login/logout.php';
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -141,6 +160,7 @@ function formatDate($dateString) {
             padding: 3rem 2rem;
         }
 
+        /* Hero Section */
         .hero-section {
             background: rgba(255, 255, 255, 0.25);
             backdrop-filter: blur(20px);
@@ -169,6 +189,7 @@ function formatDate($dateString) {
             line-height: 1.6;
         }
 
+        /* Filters Section */
         .filters-section {
             background: rgba(255, 255, 255, 0.3);
             backdrop-filter: blur(20px);
@@ -260,12 +281,14 @@ function formatDate($dateString) {
             box-shadow: 0 6px 16px rgba(74, 144, 164, 0.4);
         }
 
+        /* Results Info */
         .results-info {
             font-size: 1rem;
             color: #666;
             margin-bottom: 2rem;
         }
 
+        /* Children Grid */
         .children-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -273,6 +296,7 @@ function formatDate($dateString) {
             margin-bottom: 3rem;
         }
 
+        /* Add Child Card */
         .add-child-card {
             background: rgba(255, 255, 255, 0.25);
             backdrop-filter: blur(20px);
@@ -289,7 +313,6 @@ function formatDate($dateString) {
             transition: all 0.3s ease;
             min-height: 400px;
             text-decoration: none;
-            color: inherit;
         }
 
         .add-child-card:hover {
@@ -332,6 +355,7 @@ function formatDate($dateString) {
             max-width: 250px;
         }
 
+        /* Child Card */
         .child-card {
             background: rgba(255, 255, 255, 0.3);
             backdrop-filter: blur(20px);
@@ -472,6 +496,7 @@ function formatDate($dateString) {
             color: #999;
         }
 
+        /* Modal Styles */
         .modal {
             display: none;
             position: fixed;
@@ -485,12 +510,12 @@ function formatDate($dateString) {
             z-index: 10000;
             padding: 2rem;
             overflow-y: auto;
-            align-items: center;
-            justify-content: center;
         }
 
         .modal.active {
             display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .modal-content {
@@ -642,11 +667,33 @@ function formatDate($dateString) {
             padding: 1.5rem;
         }
 
+        .modal-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
         .modal-section-title {
             font-size: 1.25rem;
             font-weight: 700;
             color: white;
-            margin-bottom: 1rem;
+        }
+
+        .modal-edit-icon {
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .modal-edit-icon:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
 
         .modal-section-content {
@@ -664,6 +711,14 @@ function formatDate($dateString) {
             -webkit-backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.3);
             display: inline-block;
+        }
+
+        .modal-name {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: white;
+            text-align: center;
+            margin-bottom: 0.5rem;
         }
 
         .modal-details {
@@ -693,6 +748,7 @@ function formatDate($dateString) {
             font-weight: 600;
         }
 
+        /* Responsive */
         @media (max-width: 968px) {
             .filters-form {
                 grid-template-columns: 1fr;
@@ -741,6 +797,10 @@ function formatDate($dateString) {
                 grid-template-columns: 1fr;
             }
 
+            .modal-name {
+                font-size: 1.5rem;
+            }
+
             .modal-edit-btn {
                 position: static;
                 margin-bottom: 1rem;
@@ -751,6 +811,11 @@ function formatDate($dateString) {
     </style>
 </head>
 <body>
+    <?php 
+    require_once '../components/header.php';
+    require_once '../components/sidebar.php';
+    ?>
+
     <div class="container">
         <!-- Hero Section -->
         <div class="hero-section">
@@ -810,7 +875,7 @@ function formatDate($dateString) {
 
         <!-- Children Grid -->
         <div class="children-grid">
-            <!-- Add Child Card -->
+            <!-- Add Child Card (Always First) -->
             <a href="add_child.php" class="add-child-card">
                 <div class="add-icon">+</div>
                 <div class="add-child-text">Add New Child</div>
@@ -831,7 +896,7 @@ function formatDate($dateString) {
                     <div class="child-card">
                         <div class="child-image-container">
                             <?php if (!empty($child['profile_picture'])): ?>
-                                <img src="<?php echo htmlspecialchars($child['profile_picture']); ?>" 
+                                <img src="../<?php echo htmlspecialchars($child['profile_picture']); ?>" 
                                      alt="<?php echo htmlspecialchars($child['first_name']); ?>" 
                                      class="child-image">
                             <?php else: ?>
@@ -849,7 +914,7 @@ function formatDate($dateString) {
                                 <div class="child-detail"><?php echo $age; ?> years old</div>
                                 <div class="child-detail"><?php echo htmlspecialchars($child['gender']); ?></div>
                             </div>
-                            <button class="view-profile-btn" onclick='openModal(<?php echo json_encode($child, JSON_HEX_APOS | JSON_HEX_QUOT); ?>)'>
+                            <button class="view-profile-btn" onclick="openModal(<?php echo htmlspecialchars(json_encode($child)); ?>)">
                                 View Profile →
                             </button>
                         </div>
@@ -901,13 +966,17 @@ function formatDate($dateString) {
                 </div>
                 <div class="modal-right">
                     <div class="modal-section">
-                        <h3 class="modal-section-title">About Me</h3>
+                        <div class="modal-section-header">
+                            <h3 class="modal-section-title">About Me</h3>
+                        </div>
                         <div class="modal-section-content" id="modalAboutMe">
                             No information available
                         </div>
                     </div>
                     <div class="modal-section">
-                        <h3 class="modal-section-title">Dreams & Aspirations</h3>
+                        <div class="modal-section-header">
+                            <h3 class="modal-section-title">Dreams & Aspirations</h3>
+                        </div>
                         <div class="modal-section-content" id="modalDreams">
                             No information available
                         </div>
@@ -950,7 +1019,7 @@ function formatDate($dateString) {
             
             // Set image or initials
             if (child.profile_picture) {
-                imageContainer.innerHTML = `<img src="${child.profile_picture}" alt="${child.first_name}" class="modal-image">`;
+                imageContainer.innerHTML = `<img src="../${child.profile_picture}" alt="${child.first_name}" class="modal-image">`;
             } else {
                 const initials = child.first_name.charAt(0).toUpperCase() + child.last_name.charAt(0).toUpperCase();
                 imageContainer.innerHTML = `<div class="modal-initials">${initials}</div>`;
@@ -968,7 +1037,7 @@ function formatDate($dateString) {
             modalDOB.textContent = formattedDOB;
             modalStatus.textContent = status;
             
-            // Set about me and dreams
+            // Set about me and dreams (if available in your database)
             modalAboutMe.textContent = child.about_me || 'No information available';
             modalDreams.textContent = child.aspiration || 'No information available';
             
@@ -1003,6 +1072,3 @@ function formatDate($dateString) {
     </script>
 </body>
 </html>
-<?php
-$conn->close();
-?>

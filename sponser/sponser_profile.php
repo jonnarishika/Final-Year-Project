@@ -9,6 +9,9 @@ if (!isset($_SESSION['user_id'])) {
 require_once __DIR__ . '/../db_config.php';
 require_once __DIR__ . '/../components/sidebar_config.php';
 
+// ⭐ NEW: Include fraud enforcer to check restriction status
+require_once __DIR__ . '/../includes/fraud/fraud_enforcer.php';
+
 // Check if database connection exists
 if (!isset($conn)) {
     die("Database connection failed. Please check db_config.php");
@@ -41,8 +44,11 @@ if ($sponsor_id <= 0) {
     die("Invalid sponsor ID. Please contact administrator.");
 }
 
-// Get dashboard statistics
-$stmt = $conn->prepare("SELECT COUNT(*) as count FROM sponsorships WHERE sponsor_id = ? AND (end_date IS NULL OR end_date > CURDATE())");
+// ⭐ NEW: Get fraud restriction message (if any)
+$restriction_msg = getRestrictionMessage($sponsor_id);
+
+// ✅ FIXED: Get dashboard statistics using children.sponsor_id (Method A)
+$stmt = $conn->prepare("SELECT COUNT(*) as count FROM children WHERE sponsor_id = ?");
 $stmt->bind_param("i", $sponsor_id);
 $stmt->execute();
 $sponsored_children = $stmt->get_result()->fetch_assoc()['count'];
@@ -54,13 +60,13 @@ $stmt->execute();
 $total_donated = $stmt->get_result()->fetch_assoc()['total'];
 $stmt->close();
 
+// ✅ FIXED: Reports using children.sponsor_id
 $stmt = $conn->prepare("
     SELECT COUNT(DISTINCT cr.report_id) as count 
     FROM child_reports cr
-    INNER JOIN sponsorships sp ON cr.child_id = sp.child_id
-    WHERE sp.sponsor_id = ? 
+    INNER JOIN children c ON cr.child_id = c.child_id
+    WHERE c.sponsor_id = ? 
     AND cr.report_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-    AND (sp.end_date IS NULL OR sp.end_date > CURDATE())
 ");
 $stmt->bind_param("i", $sponsor_id);
 $stmt->execute();
@@ -181,6 +187,96 @@ $logout_path = '../signup_and_login/logout.php';
             padding: 2.5rem;
             position: relative;
             z-index: 1;
+        }
+
+        /* ⭐ FRAUD ALERT BANNER STYLES */
+        .fraud-alert {
+            margin-bottom: 2rem;
+            padding: 1.5rem 2rem;
+            border-radius: 20px;
+            border: 2px solid;
+            display: flex;
+            align-items: start;
+            gap: 1.25rem;
+            animation: slideDown 0.5s ease;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .fraud-alert.warning {
+            background: rgba(255, 193, 7, 0.15);
+            border-color: rgba(255, 193, 7, 0.6);
+        }
+
+        .fraud-alert.error {
+            background: rgba(244, 67, 54, 0.15);
+            border-color: rgba(244, 67, 54, 0.6);
+        }
+
+        .fraud-alert-icon {
+            font-size: 2.5rem;
+            flex-shrink: 0;
+        }
+
+        .fraud-alert-content { 
+            flex: 1; 
+        }
+
+        .fraud-alert-title {
+            font-size: 1.5rem;
+            font-weight: 800;
+            margin-bottom: 0.75rem;
+            color: rgba(0, 0, 0, 0.9);
+        }
+
+        .fraud-alert-message {
+            font-size: 1rem;
+            color: rgba(0, 0, 0, 0.75);
+            line-height: 1.6;
+            margin-bottom: 1.25rem;
+        }
+
+        .fraud-alert-actions {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .fraud-btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 0.95rem;
+        }
+
+        .fraud-btn-primary {
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+        }
+
+        .fraud-btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .fraud-btn-secondary {
+            background: rgba(255, 255, 255, 0.9);
+            color: rgba(0, 0, 0, 0.85);
+            border: 2px solid rgba(0, 0, 0, 0.2);
+        }
+
+        .fraud-btn-secondary:hover {
+            background: rgba(255, 255, 255, 1);
+            border-color: rgba(0, 0, 0, 0.3);
         }
 
         .banner-section {
@@ -583,19 +679,63 @@ $logout_path = '../signup_and_login/logout.php';
                 left: 1rem;
                 max-width: calc(100% - 2rem);
             }
+
+            .fraud-alert {
+                padding: 1.25rem;
+                border-radius: 16px;
+            }
+
+            .fraud-alert-icon {
+                font-size: 2rem;
+            }
+
+            .fraud-alert-title {
+                font-size: 1.25rem;
+            }
+
+            .fraud-alert-message {
+                font-size: 0.9rem;
+            }
+
+            .fraud-alert-actions {
+                flex-direction: column;
+            }
+
+            .fraud-btn {
+                width: 100%;
+                text-align: center;
+            }
         }
+        
     </style>
 </head>
 <body>
     <?php 
-   // FIXED: Header first, then Sidebar
-include __DIR__ . '/../components/header.php';
-include __DIR__ . '/../components/sidebar.php';
+    include __DIR__ . '/../components/header.php';
+    include __DIR__ . '/../components/sidebar.php';
     ?>
 
     <!-- Main Wrapper -->
     <div class="main-wrapper" id="mainWrapper">
         <div class="container">
+            
+            <?php if ($restriction_msg): ?>
+            <!-- ⭐ FRAUD ALERT BANNER -->
+            <div class="fraud-alert <?php echo htmlspecialchars($restriction_msg['type']); ?>">
+                <div class="fraud-alert-icon">
+                    <?php echo $restriction_msg['type'] === 'warning' ? '⚠️' : '🚫'; ?>
+                </div>
+                <div class="fraud-alert-content">
+                    <div class="fraud-alert-title"><?php echo htmlspecialchars($restriction_msg['title']); ?></div>
+                    <div class="fraud-alert-message"><?php echo htmlspecialchars($restriction_msg['message']); ?></div>
+                    <div class="fraud-alert-actions">
+                        <a href="appeal_fraud.php" class="fraud-btn fraud-btn-primary">📝 Submit Appeal</a>
+                        <a href="mailto:support@organization.com" class="fraud-btn fraud-btn-secondary">📧 Contact Support</a>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <div class="banner-section">
                 <img src="image.png" alt="Sponsor Dashboard" class="banner-image">
                 <div class="live-indicator">
@@ -699,33 +839,27 @@ include __DIR__ . '/../components/sidebar.php';
     </div>
 
     <?php 
-    // Include common scripts
     include __DIR__ . '/../components/common_scripts.php';
     ?>
 
     <script>
-        // Store sponsor ID globally
         window.SPONSOR_ID = <?php echo $sponsor_id; ?>;
 
-        // Profile picture upload handler
         document.getElementById('profilePictureInput').addEventListener('change', async function(e) {
             const file = e.target.files[0];
             if (!file) return;
 
-            // Validate file type
             const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
             if (!allowedTypes.includes(file.type)) {
                 showToast('error', 'Please select a JPG, JPEG, or PNG image');
                 return;
             }
 
-            // Validate file size (5MB)
             if (file.size > 5 * 1024 * 1024) {
                 showToast('error', 'File size must be less than 5MB');
                 return;
             }
 
-            // Upload file
             const formData = new FormData();
             formData.append('profile_picture', file);
 
@@ -740,7 +874,6 @@ include __DIR__ . '/../components/sidebar.php';
                 const result = await response.json();
 
                 if (result.success) {
-                    // Update profile picture display
                     const profilePicture = document.querySelector('.profile-picture');
                     const existingImg = document.getElementById('profilePictureImg');
                     const initials = document.getElementById('profileInitials');
@@ -762,40 +895,22 @@ include __DIR__ . '/../components/sidebar.php';
             }
         });
 
-        // Toast notification function
         function showToast(type, message) {
             const toast = document.getElementById('uploadToast');
             const icon = document.getElementById('toastIcon');
             const msg = document.getElementById('toastMessage');
 
-            // Set icon based on type
-            const icons = {
-                success: '✅',
-                error: '❌',
-                info: '⏳'
-            };
-            
+            const icons = { success: '✅', error: '❌', info: '⏳' };
             icon.textContent = icons[type] || '📢';
             msg.textContent = message;
 
-            // Remove existing classes
             toast.classList.remove('success', 'error', 'info');
-            
-            // Add type class
-            if (type !== 'info') {
-                toast.classList.add(type);
-            }
+            if (type !== 'info') toast.classList.add(type);
 
-            // Show toast
             toast.classList.add('show');
-
-            // Hide after 3 seconds
-            setTimeout(() => {
-                toast.classList.remove('show');
-            }, 3000);
+            setTimeout(() => toast.classList.remove('show'), 3000);
         }
 
-        // Function to open dashboard detail pages
         function openDashboard(type) {
             const routes = {
                 'sponsored-children': 'sponsored_children.php',
@@ -803,75 +918,88 @@ include __DIR__ . '/../components/sidebar.php';
                 'reports-updates': 'reports_updates.php',
                 'timeline': 'timeline.php'
             };
-            
             window.location.href = routes[type];
         }
 
-        // Function to refresh dashboard counts
         function refreshDashboardCounts() {
             const liveDot = document.getElementById('live-dot');
             const liveStatus = document.getElementById('live-status');
             
-            // Show updating state
             liveDot.classList.add('updating');
             liveStatus.textContent = 'Updating...';
             
             fetch(`get_dashboard_counts.php?sponsor_id=${window.SPONSOR_ID}`)
                 .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
+                    if (!response.ok) throw new Error('Network response was not ok');
                     return response.json();
                 })
                 .then(data => {
                     if (data.success) {
-                        // Update counts with animation
-                        updateCount('sponsored-children-count', data.sponsored_children);
-                        updateCount('total-donations-count', '₹' + parseFloat(data.total_donated).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','));
-                        updateCount('reports-count', data.new_reports);
-                        updateCount('timeline-events-count', data.recent_events);
+                        const currentSponsored = document.getElementById('sponsored-children-count').textContent.trim();
+                        const currentDonated = document.getElementById('total-donations-count').textContent.replace(/[^0-9.]/g, '');
+                        const currentReports = document.getElementById('reports-count').textContent.trim();
+                        const currentEvents = document.getElementById('timeline-events-count').textContent.trim();
                         
-                        console.log('Dashboard updated at:', data.timestamp);
+                        const newSponsored = String(data.sponsored_children);
+                        const newDonated = String(parseFloat(data.total_donated).toFixed(2));
+                        const newReports = String(data.new_reports);
+                        const newEvents = String(data.recent_events);
+                        
+                        if (currentSponsored !== newSponsored) {
+                            updateCount('sponsored-children-count', newSponsored);
+                        }
+                        
+                        if (currentDonated !== newDonated) {
+                            const formatted = '₹' + parseFloat(data.total_donated).toLocaleString('en-IN', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                            });
+                            updateCount('total-donations-count', formatted);
+                        }
+                        
+                        if (currentReports !== newReports) {
+                            updateCount('reports-count', newReports);
+                        }
+                        
+                        if (currentEvents !== newEvents) {
+                            updateCount('timeline-events-count', newEvents);
+                        }
+                        
+                        console.log('✅ Dashboard updated at:', data.timestamp);
                     }
                     
-                    // Reset to live state
                     setTimeout(() => {
                         liveDot.classList.remove('updating');
                         liveStatus.textContent = 'Live';
                     }, 500);
                 })
                 .catch(error => {
-                    console.error('Error refreshing counts:', error);
+                    console.error('❌ Error refreshing counts:', error);
                     liveDot.classList.remove('updating');
                     liveStatus.textContent = 'Error';
-                    setTimeout(() => {
-                        liveStatus.textContent = 'Live';
-                    }, 3000);
+                    setTimeout(() => liveStatus.textContent = 'Live', 3000);
                 });
         }
 
-        // Function to update count with animation
         function updateCount(elementId, newValue) {
             const element = document.getElementById(elementId);
-            const currentValue = element.textContent.replace(/[^0-9.]/g, '');
-            const cleanNewValue = String(newValue).replace(/[^0-9.]/g, '');
+            if (!element) return;
             
-            if (currentValue !== cleanNewValue) {
+            const currentValue = element.textContent.trim();
+            
+            if (currentValue !== String(newValue)) {
                 element.classList.add('updating');
-                
                 setTimeout(() => {
                     element.textContent = newValue;
-                    setTimeout(() => {
-                        element.classList.remove('updating');
-                    }, 300);
+                    setTimeout(() => element.classList.remove('updating'), 300);
                 }, 150);
             }
         }
 
-        // Page load animations
         document.addEventListener('DOMContentLoaded', function() {
-            const cards = document.querySelectorAll('.dashboard-card');
+            console.log('🚀 Dashboard initialized with sponsor ID:', window.SPONSOR_ID);
             
+            const cards = document.querySelectorAll('.dashboard-card');
             cards.forEach((card, index) => {
                 card.style.opacity = '0';
                 card.style.transform = 'translateY(30px)';
@@ -883,12 +1011,21 @@ include __DIR__ . '/../components/sidebar.php';
                 }, index * 100);
             });
 
-            // Start auto-refresh after 3 seconds
             setTimeout(() => {
+                console.log('⏰ Starting auto-refresh cycle...');
                 refreshDashboardCounts();
-                // Auto-refresh every 30 seconds
                 setInterval(refreshDashboardCounts, 30000);
-            }, 3000);
+            }, 5000);
+            
+            let isRefreshing = false;
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden && !isRefreshing) {
+                    isRefreshing = true;
+                    console.log('👁️ Tab focused - refreshing counts...');
+                    refreshDashboardCounts();
+                    setTimeout(() => isRefreshing = false, 2000);
+                }
+            });
         });
     </script>
 </body>

@@ -3,9 +3,6 @@ session_start();
 require_once __DIR__ . '/../db_config.php';
 require __DIR__ . '/../vendor/autoload.php';
 
-// Adjust path if needed
-
-
 // Check if sponsor is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../signup_and_login/login_template.php");
@@ -18,9 +15,22 @@ if (!isset($_GET['donation_id'])) {
 }
 
 $receipt_no = $_GET['donation_id'];
-$sponsor_id = $_SESSION['user_id'];
+$user_id = $_SESSION['user_id'];
 
-// Fetch donation details
+// FIXED: Get actual sponsor_id from sponsors table
+$stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$sponsor_result = $stmt->get_result();
+$sponsor_data = $sponsor_result->fetch_assoc();
+
+if (!$sponsor_data) {
+    die("Sponsor profile not found");
+}
+
+$sponsor_id = $sponsor_data['sponsor_id'];
+
+// Fetch donation details - FIXED QUERY
 $stmt = $conn->prepare("
     SELECT 
         d.donation_id,

@@ -10,6 +10,9 @@ if (!isset($_SESSION['user_id'])) {
 require_once __DIR__ . '/../db_config.php';
 require_once __DIR__ . '/../components/sidebar_config.php';
 
+// ⭐ NEW: Include fraud enforcer
+require_once __DIR__ . '/../includes/fraud/fraud_enforcer.php';
+
 // Check if database connection exists
 if (!isset($conn)) {
     die("Database connection failed. Please check db_config.php");
@@ -55,6 +58,22 @@ if ($result->num_rows === 0) {
 }
 
 $sponsor = $result->fetch_assoc();
+
+// ⭐ NEW: Get sponsor_id from sponsors table
+$stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$sponsor_data = $stmt->get_result()->fetch_assoc();
+$sponsor_id = $sponsor_data['sponsor_id'] ?? null;
+
+// ⭐ NEW: Check fraud status
+$fraud_status = null;
+$restriction_msg = null;
+if ($sponsor_id) {
+    $fraud_status = getSponsorFraudStatus($sponsor_id);
+    $restriction_msg = getRestrictionMessage($sponsor_id);
+}
+
 $stmt->close();
 $conn->close();
 
@@ -165,6 +184,98 @@ $logout_path = '../signup_and_login/logout.php';
             min-height: calc(100vh - 80px);
             display: flex;
             flex-direction: column;
+        }
+
+        /* ⭐ NEW: Fraud Alert Banners */
+        .fraud-alert {
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            border-radius: 16px;
+            border: 2px solid;
+            display: flex;
+            align-items: start;
+            gap: 1rem;
+            animation: slideDown 0.4s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fraud-alert.warning {
+            background: rgba(255, 193, 7, 0.15);
+            border-color: rgba(255, 193, 7, 0.5);
+        }
+
+        .fraud-alert.error {
+            background: rgba(244, 67, 54, 0.15);
+            border-color: rgba(244, 67, 54, 0.5);
+        }
+
+        .fraud-alert-icon {
+            font-size: 2rem;
+            flex-shrink: 0;
+        }
+
+        .fraud-alert-content {
+            flex: 1;
+        }
+
+        .fraud-alert-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: rgba(0, 0, 0, 0.85);
+        }
+
+        .fraud-alert-message {
+            font-size: 0.95rem;
+            color: rgba(0, 0, 0, 0.7);
+            line-height: 1.5;
+        }
+
+        .fraud-alert-actions {
+            margin-top: 1rem;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .fraud-btn {
+            padding: 0.5rem 1.25rem;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .fraud-btn-primary {
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+        }
+
+        .fraud-btn-primary:hover {
+            background: rgba(0, 0, 0, 0.95);
+            transform: translateY(-2px);
+        }
+
+        .fraud-btn-secondary {
+            background: rgba(255, 255, 255, 0.8);
+            color: rgba(0, 0, 0, 0.85);
+            border: 1px solid rgba(0, 0, 0, 0.2);
+        }
+
+        .fraud-btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.95);
         }
 
         .welcome-section {
@@ -381,18 +492,39 @@ $logout_path = '../signup_and_login/logout.php';
                 margin-top: 3rem;
                 padding: 2rem;
             }
+
+            .fraud-alert-actions {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
 <body>
     <?php 
-    // FIXED: Header first, then Sidebar
     include __DIR__ . '/../components/header.php';
     include __DIR__ . '/../components/sidebar.php';
     ?>
 
     <div class="main-wrapper" id="mainWrapper">
         <div class="container">
+            
+            <?php if ($restriction_msg): ?>
+                <!-- ⭐ NEW: Fraud Alert Banner -->
+                <div class="fraud-alert <?php echo $restriction_msg['type']; ?>">
+                    <div class="fraud-alert-icon">
+                        <?php echo $restriction_msg['type'] === 'warning' ? '⚠️' : '🚫'; ?>
+                    </div>
+                    <div class="fraud-alert-content">
+                        <div class="fraud-alert-title"><?php echo htmlspecialchars($restriction_msg['title']); ?></div>
+                        <div class="fraud-alert-message"><?php echo htmlspecialchars($restriction_msg['message']); ?></div>
+                        <div class="fraud-alert-actions">
+                            <a href="appeal_fraud.php" class="fraud-btn fraud-btn-primary">Submit Appeal</a>
+                            <a href="mailto:support@organization.com" class="fraud-btn fraud-btn-secondary">Contact Support</a>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
             <div class="welcome-section">
                 <h1 class="welcome-title">Welcome, <?php echo htmlspecialchars($sponsor['username']); ?>!</h1>
                 <p class="welcome-subtitle">Choose an option to get started</p>

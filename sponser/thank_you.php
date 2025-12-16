@@ -21,7 +21,21 @@ $payment_id = $_GET['payment_id'];
 $order_id = $_GET['order_id'];
 $signature = $_GET['signature'];
 $child_id = $_GET['child_id'] ?? null;
-$sponsor_id = $_SESSION['user_id'];
+$user_id = $_SESSION['user_id'];
+
+// FIXED: Get actual sponsor_id from sponsors table
+$stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$sponsor_result = $stmt->get_result();
+$sponsor_data = $sponsor_result->fetch_assoc();
+
+if (!$sponsor_data) {
+    header("Location: payment_failed.php?error=Sponsor not found");
+    exit();
+}
+
+$sponsor_id = $sponsor_data['sponsor_id'];
 
 // Verify signature with Razorpay
 $api_key = 'rzp_test_RiQdqG3QtpFjdt';
@@ -47,7 +61,7 @@ try {
     
     // Find the pending donation and update it
     $stmt = $conn->prepare("
-        SELECT donation_id, amount 
+        SELECT donation_id, amount, child_id
         FROM donations 
         WHERE razorpay_order_id = ? 
         AND sponsor_id = ? 
@@ -66,6 +80,7 @@ try {
     }
     
     $donation_id = $donation['donation_id'];
+    $donation_child_id = $donation['child_id'];
     
     // Generate receipt number
     $receipt_no = 'RCP-' . date('YmdHis') . '-' . $donation_id;
@@ -75,13 +90,44 @@ try {
         UPDATE donations 
         SET status = 'Success', 
             razorpay_payment_id = ?, 
+            razorpay_signature = ?,
             receipt_no = ?,
             payment_date = NOW()
         WHERE donation_id = ?
     ");
     
-    $stmt->bind_param("ssi", $payment_id, $receipt_no, $donation_id);
+    $stmt->bind_param("sssi", $payment_id, $signature, $receipt_no, $donation_id);
     $stmt->execute();
+    
+    // Check if sponsorship already exists
+    $stmt = $conn->prepare("
+        SELECT sponsorship_id 
+        FROM sponsorships 
+        WHERE sponsor_id = ? AND child_id = ? AND end_date IS NULL
+    ");
+    $stmt->bind_param("ii", $sponsor_id, $donation_child_id);
+    $stmt->execute();
+    $existing_sponsorship = $stmt->get_result()->fetch_assoc();
+    
+    // Create new sponsorship record only if none exists
+    if (!$existing_sponsorship) {
+        $stmt = $conn->prepare("
+            INSERT INTO sponsorships 
+            (sponsor_id, child_id, start_date) 
+            VALUES (?, ?, NOW())
+        ");
+        $stmt->bind_param("ii", $sponsor_id, $donation_child_id);
+        $stmt->execute();
+        
+        // Update child's status and current sponsor
+        $stmt = $conn->prepare("
+            UPDATE children 
+            SET status = 'Sponsored', sponsor_id = ? 
+            WHERE child_id = ?
+        ");
+        $stmt->bind_param("ii", $sponsor_id, $donation_child_id);
+        $stmt->execute();
+    }
     
     // Fetch complete donation details for display
     $stmt = $conn->prepare("
@@ -110,7 +156,7 @@ try {
     $donation_data = $result->fetch_assoc();
     
     if (!$donation_data) {
-        header("Location: payment_failed.php?error=Could not retrieve donation details&child_id=" . urlencode($child_id));
+        header("Location: payment_failed.php?error=" . urlencode("Could not retrieve donation details") . "&child_id=" . urlencode($child_id));
         exit();
     }
     

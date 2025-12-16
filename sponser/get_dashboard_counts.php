@@ -1,7 +1,10 @@
 <?php
 /**
  * AJAX endpoint for refreshing sponsor dashboard counts
- * Returns JSON data with current statistics for a specific sponsor
+ * ✅ FIXED VERSION - Uses children.sponsor_id (Method A)
+ * 
+ * File: get_dashboard_counts.php
+ * Location: Save in the same folder as sponser_main_page.php
  */
 
 session_start();
@@ -41,47 +44,36 @@ if ($result->num_rows === 0) {
 $stmt->close();
 
 try {
-    $counts = [];
+    // ✅ FIXED: Use children.sponsor_id (Method A - Direct Link)
     
-    // 1. Sponsored Children (active sponsorships)
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) as count 
-        FROM sponsorships 
-        WHERE sponsor_id = ? 
-        AND (end_date IS NULL OR end_date > CURDATE())
-    ");
+    // 1. Sponsored children count
+    $stmt = $conn->prepare("SELECT COUNT(*) as count FROM children WHERE sponsor_id = ?");
     $stmt->bind_param("i", $sponsor_id);
     $stmt->execute();
-    $counts['sponsored_children'] = $stmt->get_result()->fetch_assoc()['count'];
+    $sponsored_children = $stmt->get_result()->fetch_assoc()['count'];
     $stmt->close();
     
-    // 2. Total Donations
-    $stmt = $conn->prepare("
-        SELECT COALESCE(SUM(amount), 0) as total 
-        FROM donations 
-        WHERE sponsor_id = ?
-    ");
+    // 2. Total donated amount
+    $stmt = $conn->prepare("SELECT COALESCE(SUM(amount), 0) as total FROM donations WHERE sponsor_id = ?");
     $stmt->bind_param("i", $sponsor_id);
     $stmt->execute();
-    $counts['total_donated'] = $stmt->get_result()->fetch_assoc()['total'];
+    $total_donated = $stmt->get_result()->fetch_assoc()['total'];
     $stmt->close();
     
-    // 3. New Reports (last 30 days) - Using report_date field as in sponser_profile.php
+    // 3. New reports in last 30 days (via children.sponsor_id)
     $stmt = $conn->prepare("
         SELECT COUNT(DISTINCT cr.report_id) as count 
         FROM child_reports cr
-        INNER JOIN sponsorships sp ON cr.child_id = sp.child_id
-        WHERE sp.sponsor_id = ? 
+        INNER JOIN children c ON cr.child_id = c.child_id
+        WHERE c.sponsor_id = ? 
         AND cr.report_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        AND (sp.end_date IS NULL OR sp.end_date > CURDATE())
     ");
     $stmt->bind_param("i", $sponsor_id);
     $stmt->execute();
-    $counts['new_reports'] = $stmt->get_result()->fetch_assoc()['count'];
+    $new_reports = $stmt->get_result()->fetch_assoc()['count'];
     $stmt->close();
     
-    // 4. Recent Timeline Events (last 30 days)
-    // Check if table exists first
+    // 4. Recent timeline events (if table exists)
     $table_check = $conn->query("SHOW TABLES LIKE 'timeline_events'");
     if ($table_check && $table_check->num_rows > 0) {
         $stmt = $conn->prepare("
@@ -92,67 +84,26 @@ try {
         ");
         $stmt->bind_param("i", $sponsor_id);
         $stmt->execute();
-        $counts['recent_events'] = $stmt->get_result()->fetch_assoc()['count'];
+        $recent_events = $stmt->get_result()->fetch_assoc()['count'];
         $stmt->close();
     } else {
-        $counts['recent_events'] = 0;
+        $recent_events = 0;
     }
     
-    // Additional useful statistics
+    // Build response
+    $response = [
+        'success' => true,
+        'sponsored_children' => (int)$sponsored_children,
+        'total_donated' => (float)$total_donated,
+        'new_reports' => (int)$new_reports,
+        'recent_events' => (int)$recent_events,
+        'timestamp' => date('Y-m-d H:i:s')
+    ];
     
-    // 5. Total children ever sponsored
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) as count 
-        FROM sponsorships 
-        WHERE sponsor_id = ?
-    ");
-    $stmt->bind_param("i", $sponsor_id);
-    $stmt->execute();
-    $counts['total_children_ever'] = $stmt->get_result()->fetch_assoc()['count'];
-    $stmt->close();
-    
-    // 6. Donation count
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) as count 
-        FROM donations 
-        WHERE sponsor_id = ?
-    ");
-    $stmt->bind_param("i", $sponsor_id);
-    $stmt->execute();
-    $counts['donation_count'] = $stmt->get_result()->fetch_assoc()['count'];
-    $stmt->close();
-    
-    // 7. Last donation date
-    $stmt = $conn->prepare("
-        SELECT MAX(donation_date) as last_date 
-        FROM donations 
-        WHERE sponsor_id = ?
-    ");
-    $stmt->bind_param("i", $sponsor_id);
-    $stmt->execute();
-    $result = $stmt->get_result()->fetch_assoc();
-    $counts['last_donation_date'] = $result['last_date'] ?? null;
-    $stmt->close();
-    
-    // 8. Total reports received
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) as count 
-        FROM child_reports 
-        WHERE sponsor_id = ?
-    ");
-    $stmt->bind_param("i", $sponsor_id);
-    $stmt->execute();
-    $counts['total_reports'] = $stmt->get_result()->fetch_assoc()['count'];
-    $stmt->close();
-    
-    // Add timestamp and success flag
-    $counts['timestamp'] = date('Y-m-d H:i:s');
-    $counts['success'] = true;
-    
-    // Return JSON response
-    echo json_encode($counts);
+    echo json_encode($response);
     
 } catch (Exception $e) {
+    error_log("Error in get_dashboard_counts.php: " . $e->getMessage());
     http_response_code(500);
     echo json_encode([
         'error' => 'Internal server error',

@@ -1,4 +1,16 @@
 <?php
+require_once __DIR__ . '/../includes/fraud/fraud_enforcer.php';
+
+// Get sponsor_id
+$stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
+$stmt->bind_param("i", $_SESSION['user_id']);
+$stmt->execute();
+$sponsor_data = $stmt->get_result()->fetch_assoc();
+
+if ($sponsor_data) {
+    // Block frozen/blocked sponsors from accessing checkout
+    enforceDonationRestriction($sponsor_data['sponsor_id'], 'my_home.php');
+}
 require_once(__DIR__ . '/../razorpay-php/Razorpay.php');
 use Razorpay\Api\Api;
 session_start();
@@ -16,7 +28,20 @@ if (!isset($_GET['child_id']) || !is_numeric($_GET['child_id'])) {
 }
 
 $child_id = (int)$_GET['child_id'];
-$sponsor_id = $_SESSION['user_id'];
+$user_id = $_SESSION['user_id'];
+
+// FIXED: Fetch the actual sponsor_id from sponsors table
+$stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$sponsor_result = $stmt->get_result();
+$sponsor_data = $sponsor_result->fetch_assoc();
+
+if (!$sponsor_data) {
+    die("Sponsor profile not found");
+}
+
+$sponsor_id = $sponsor_data['sponsor_id'];
 
 // Fetch child details
 $stmt = $conn->prepare("
@@ -43,7 +68,7 @@ $stmt = $conn->prepare("
     WHERE s.user_id = ?
 ");
 
-$stmt->bind_param("i", $sponsor_id);
+$stmt->bind_param("i", $user_id);
 $stmt->execute();
 
 $result = $stmt->get_result();
@@ -89,15 +114,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $razorpay_order_id = $order_id;
             $razorpay_amount = $razorpay_order->amount;
             
-            // Insert donation record
+            // Insert donation record with correct sponsor_id
             $stmt = $conn->prepare("
                 INSERT INTO donations 
                 (sponsor_id, child_id, amount, razorpay_order_id, status, donation_date) 
                 VALUES (?, ?, ?, ?, 'Pending', NOW())
             ");
 
-            $stmt->bind_param("iiis", 
-                $sponsor_id,
+            $stmt->bind_param("iids", 
+                $sponsor_id,  // Using correct sponsor_id from sponsors table
                 $child_id,
                 $amount,
                 $order_id
