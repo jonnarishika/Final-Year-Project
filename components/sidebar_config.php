@@ -49,8 +49,8 @@ function getSidebarMenu($menu_type, $current_page = '') {
                     ],
                     [
                         'label' => 'Fraud Management',
-                        'url' => $basePath . 'owner/fraud.php',
-                        'active' => ($current_page === 'fraud.php')
+                        'url' => $basePath . 'owner/signals_overview.php',
+                        'active' => ($current_page === 'signals_overview.php')
                     ]
                 ]
             ],
