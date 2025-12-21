@@ -1,16 +1,4 @@
 <?php
-require_once __DIR__ . '/../includes/fraud/fraud_enforcer.php';
-
-// Get sponsor_id
-$stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
-$stmt->bind_param("i", $_SESSION['user_id']);
-$stmt->execute();
-$sponsor_data = $stmt->get_result()->fetch_assoc();
-
-if ($sponsor_data) {
-    // Block frozen/blocked sponsors from accessing checkout
-    enforceDonationRestriction($sponsor_data['sponsor_id'], 'my_home.php');
-}
 require_once(__DIR__ . '/../razorpay-php/Razorpay.php');
 use Razorpay\Api\Api;
 session_start();
