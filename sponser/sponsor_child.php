@@ -110,17 +110,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ");
 
             $stmt->bind_param("iids", 
-                $sponsor_id,  // Using correct sponsor_id from sponsors table
+                $sponsor_id,
                 $child_id,
                 $amount,
                 $order_id
             );
 
-            $stmt->execute();
-            $donation_id = $conn->insert_id;
+            if ($stmt->execute()) {
+                $donation_id = $conn->insert_id;
+                
+                // ⭐ CRITICAL: Store order_id in session for failure tracking
+                $_SESSION['pending_order_id'] = $order_id;
+                $_SESSION['pending_donation_id'] = $donation_id;
+                
+                error_log("🔵 Created order: " . $order_id . " | Donation ID: " . $donation_id);
+            } else {
+                throw new Exception("Failed to create donation record");
+            }
             
         } catch (Exception $e) {
             $error = "Payment processing error: " . $e->getMessage();
+            error_log("❌ Error creating order: " . $e->getMessage());
         }
     }
 }
@@ -576,6 +586,10 @@ if (!isset($_SESSION['csrf_token'])) {
         let razorpayAmount = <?php echo $razorpay_amount ? $razorpay_amount : "null"; ?>;
         let apiKey = '<?php echo 'rzp_test_RiQdqG3QtpFjdt'; ?>';
 
+        if (razorpayOrderId) {
+            console.log("Razorpay Order ID ready:", razorpayOrderId);
+        }
+
         function setAmount(value) {
             document.getElementById('amount').value = value;
             updateSummary();
@@ -594,7 +608,6 @@ if (!isset($_SESSION['csrf_token'])) {
 
         document.getElementById('amount').addEventListener('input', updateSummary);
 
-        // Handle form submission
         document.getElementById('donationForm').addEventListener('submit', function(e) {
             if (!document.getElementById('agreeTerms').checked) {
                 alert('Please accept the terms and conditions');
@@ -602,7 +615,6 @@ if (!isset($_SESSION['csrf_token'])) {
                 return;
             }
 
-            // Allow first POST to go to PHP to create order
             if (razorpayOrderId) {
                 e.preventDefault();
                 openRazorpayPayment();
@@ -610,6 +622,8 @@ if (!isset($_SESSION['csrf_token'])) {
         });
 
         function openRazorpayPayment() {
+            console.log("Opening Razorpay with order:", razorpayOrderId);
+            
             var options = {
                 key: apiKey,
                 amount: razorpayAmount,
@@ -626,7 +640,7 @@ if (!isset($_SESSION['csrf_token'])) {
                     color: '#6c5ce7'
                 },
                 handler: function(response) {
-                    // Payment successful - redirect to thank_you page
+                    console.log("Payment successful!", response);
                     var form = document.createElement('form');
                     form.method = 'GET';
                     form.action = 'thank_you.php';
@@ -660,7 +674,8 @@ if (!isset($_SESSION['csrf_token'])) {
                 },
                 modal: {
                     ondismiss: function() {
-                        window.location.href = 'payment_failed.php?error=Payment cancelled by user&child_id=<?php echo $child_id; ?>';
+                        console.log("Payment cancelled by user");
+                        window.location.href = 'payment_failed.php?error=Payment cancelled by user&child_id=<?php echo $child_id; ?>&order_id=' + encodeURIComponent(razorpayOrderId);
                     }
                 }
             };
@@ -668,11 +683,12 @@ if (!isset($_SESSION['csrf_token'])) {
             var rzp1 = new Razorpay(options);
             
             rzp1.on('payment.failed', function(response) {
+                console.error("Payment failed!", response);
                 var errorMsg = response.error.description || 'Payment failed';
                 var errorReason = response.error.reason || '';
                 window.location.href = 'payment_failed.php?error=' + encodeURIComponent(errorMsg) + 
                                       '&reason=' + encodeURIComponent(errorReason) + 
-                                      '&child_id=<?php echo $child_id; ?>';
+                                      '&child_id=<?php echo $child_id; ?>&order_id=' + encodeURIComponent(razorpayOrderId);
             });
 
             rzp1.open();

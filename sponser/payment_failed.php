@@ -1,5 +1,6 @@
 <?php
 session_start();
+require_once __DIR__ . '/../db_config.php';
 
 // Check if sponsor is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -7,11 +8,100 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Get user_id and fetch sponsor_id
+$user_id = $_SESSION['user_id'];
+$stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$sponsor_data = $stmt->get_result()->fetch_assoc();
+
+if (!$sponsor_data) {
+    die("Sponsor profile not found");
+}
+
+$sponsor_id = $sponsor_data['sponsor_id'];
+
 // Get error message if provided
 $error_message = isset($_GET['error']) ? $_GET['error'] : 'Payment could not be processed';
 
 // Get child_id if provided (optional - for Try Again button)
 $child_id = isset($_GET['child_id']) ? (int)$_GET['child_id'] : null;
+
+// Get order_id if provided (to update donation status)
+$order_id = isset($_GET['order_id']) ? $_GET['order_id'] : null;
+
+// ⭐ NEW: Update failed/cancelled transactions from Pending to Failed
+// Method 1: If order_id is provided in URL
+if ($order_id) {
+    try {
+        $stmt = $conn->prepare("
+            UPDATE donations 
+            SET status = 'Failed',
+                payment_date = NOW()
+            WHERE razorpay_order_id = ? 
+            AND sponsor_id = ?
+            AND status = 'Pending'
+        ");
+        $stmt->bind_param("si", $order_id, $sponsor_id);
+        $stmt->execute();
+        
+        if ($stmt->affected_rows > 0) {
+            error_log("✅ Updated donation to Failed for order: " . $order_id);
+        } else {
+            error_log("⚠️ No pending donation found for order: " . $order_id);
+        }
+    } catch (Exception $e) {
+        error_log("❌ Error updating failed payment: " . $e->getMessage());
+    }
+}
+
+// Method 2: If order_id is stored in session (fallback)
+if (isset($_SESSION['pending_order_id']) && !$order_id) {
+    $session_order_id = $_SESSION['pending_order_id'];
+    try {
+        $stmt = $conn->prepare("
+            UPDATE donations 
+            SET status = 'Failed',
+                payment_date = NOW()
+            WHERE razorpay_order_id = ? 
+            AND sponsor_id = ?
+            AND status = 'Pending'
+        ");
+        $stmt->bind_param("si", $session_order_id, $sponsor_id);
+        $stmt->execute();
+        
+        if ($stmt->affected_rows > 0) {
+            error_log("✅ Updated donation to Failed using session order: " . $session_order_id);
+            unset($_SESSION['pending_order_id']); // Clear it
+        }
+    } catch (Exception $e) {
+        error_log("❌ Error updating failed payment from session: " . $e->getMessage());
+    }
+}
+
+// Method 3: Update the most recent pending donation for this sponsor (last resort)
+if (!$order_id && !isset($_SESSION['pending_order_id'])) {
+    try {
+        $stmt = $conn->prepare("
+            UPDATE donations 
+            SET status = 'Failed',
+                payment_date = NOW()
+            WHERE sponsor_id = ? 
+            AND status = 'Pending'
+            AND donation_date >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)
+            ORDER BY donation_id DESC
+            LIMIT 1
+        ");
+        $stmt->bind_param("i", $sponsor_id);
+        $stmt->execute();
+        
+        if ($stmt->affected_rows > 0) {
+            error_log("✅ Updated most recent pending donation to Failed for sponsor: " . $sponsor_id);
+        }
+    } catch (Exception $e) {
+        error_log("❌ Error updating recent failed payment: " . $e->getMessage());
+    }
+}
 
 // Sanitize error message for display
 $error_message = htmlspecialchars($error_message);

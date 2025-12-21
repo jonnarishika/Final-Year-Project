@@ -5,6 +5,9 @@ use Razorpay\Api\Api;
 session_start();
 require_once __DIR__ . '/../db_config.php';
 
+// ⭐ NEW: Include fraud detection
+require_once __DIR__ . '/../includes/fraud/fraud_detector.php';
+
 // Check if sponsor is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../signup_and_login/login_template.php");
@@ -44,7 +47,7 @@ $api_secret = 'mMhzmW57NeJ7q3AWTUX37wKx';
 $generated_signature = hash_hmac('sha256', $order_id . "|" . $payment_id, $api_secret);
 
 if ($generated_signature !== $signature) {
-    header("Location: payment_failed.php?error=Invalid payment signature&child_id=" . urlencode($child_id));
+    header("Location: payment_failed.php?error=Invalid payment signature&child_id=" . urlencode($child_id) . "&order_id=" . urlencode($order_id));
     exit();
 }
 
@@ -55,7 +58,7 @@ try {
     $payment = $api->payment->fetch($payment_id);
     
     if ($payment['status'] !== 'captured') {
-        header("Location: payment_failed.php?error=Payment not captured&child_id=" . urlencode($child_id));
+        header("Location: payment_failed.php?error=Payment not captured&child_id=" . urlencode($child_id) . "&order_id=" . urlencode($order_id));
         exit();
     }
     
@@ -75,15 +78,37 @@ try {
     $donation = $result->fetch_assoc();
     
     if (!$donation) {
-        header("Location: payment_failed.php?error=Donation record not found&child_id=" . urlencode($child_id));
+        header("Location: payment_failed.php?error=Donation record not found&child_id=" . urlencode($child_id) . "&order_id=" . urlencode($order_id));
         exit();
     }
     
     $donation_id = $donation['donation_id'];
     $donation_child_id = $donation['child_id'];
     
-    // Generate receipt number
-    $receipt_no = 'RCP-' . date('YmdHis') . '-' . $donation_id;
+    // Generate receipt number (DON-2025-0001 format)
+    $year = date('Y');
+    
+    // Get the last donation number for this year
+    $stmt = $conn->prepare("
+        SELECT receipt_no 
+        FROM donations 
+        WHERE receipt_no LIKE ? 
+        ORDER BY donation_id DESC 
+        LIMIT 1
+    ");
+    $pattern = "DON-{$year}-%";
+    $stmt->bind_param("s", $pattern);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $last_donation = $result->fetch_assoc();
+    
+    if ($last_donation && preg_match('/DON-\d{4}-(\d{4})/', $last_donation['receipt_no'], $matches)) {
+        $next_number = intval($matches[1]) + 1;
+    } else {
+        $next_number = 1;
+    }
+    
+    $receipt_no = sprintf("DON-%s-%04d", $year, $next_number);
     
     // Update donation status to Success
     $stmt = $conn->prepare("
@@ -98,6 +123,8 @@ try {
     
     $stmt->bind_param("sssi", $payment_id, $signature, $receipt_no, $donation_id);
     $stmt->execute();
+    
+    error_log("✅ Payment successful - Donation ID: {$donation_id} | Receipt: {$receipt_no}");
     
     // Check if sponsorship already exists
     $stmt = $conn->prepare("
@@ -127,7 +154,24 @@ try {
         ");
         $stmt->bind_param("ii", $sponsor_id, $donation_child_id);
         $stmt->execute();
+        
+        error_log("✅ Created new sponsorship for child ID: {$donation_child_id}");
     }
+    
+    // ⭐ RUN FRAUD DETECTION
+    error_log("=== FRAUD DETECTION START ===");
+    error_log("Sponsor ID: {$sponsor_id}");
+    error_log("Donation ID: {$donation_id}");
+    
+    runFraudDetection($sponsor_id, $donation_id);
+    
+    error_log("=== FRAUD DETECTION END ===");
+    
+    // ⭐ CLEAR SESSION VARIABLES (Payment successful)
+    unset($_SESSION['pending_order_id']);
+    unset($_SESSION['pending_donation_id']);
+    
+    error_log("✅ Cleared session variables for successful payment");
     
     // Fetch complete donation details for display
     $stmt = $conn->prepare("
@@ -161,7 +205,8 @@ try {
     }
     
 } catch (Exception $e) {
-    header("Location: payment_failed.php?error=" . urlencode($e->getMessage()) . "&child_id=" . urlencode($child_id));
+    error_log("❌ Payment verification error: " . $e->getMessage());
+    header("Location: payment_failed.php?error=" . urlencode($e->getMessage()) . "&child_id=" . urlencode($child_id) . "&order_id=" . urlencode($order_id));
     exit();
 }
 
