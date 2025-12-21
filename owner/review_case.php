@@ -5,8 +5,6 @@ require_once __DIR__ . '/../db_config.php';
 require_once __DIR__ . '/../includes/fraud_services.php';
 require_once __DIR__ . '/../includes/risk_engine.php';
 
-
-
 $sponsor_id = $_GET['sponsor_id'] ?? null;
 if (!$sponsor_id) {
     header('Location: signals_overview.php');
@@ -22,6 +20,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     
     if ($result['success']) {
         $success_message = "Action '{$action}' completed successfully.";
+        // Refresh page to show updated data
+        header("Location: review_case.php?sponsor_id={$sponsor_id}&success=1");
+        exit();
     } else {
         $error_message = $result['error'];
     }
@@ -41,6 +42,32 @@ $active_case = $case_data['active_case'];
 $case_notes = $case_data['case_notes'];
 $donations = $case_data['donations'];
 $appeals = $case_data['appeals'];
+
+// Ensure account_status exists with default value
+if (!isset($sponsor['account_status'])) {
+    $sponsor['account_status'] = 'active';
+}
+
+// Ensure last_name exists
+if (!isset($sponsor['last_name'])) {
+    $sponsor['last_name'] = '';
+}
+
+// Get action history from fraud_case_notes table
+$action_history = [];
+if ($active_case) {
+    $action_history_query = "
+        SELECT fcn.*, u.first_name, u.last_name 
+        FROM fraud_case_notes fcn
+        LEFT JOIN users u ON fcn.admin_id = u.user_id
+        WHERE fcn.fraud_case_id = ?
+        ORDER BY fcn.created_at DESC
+    ";
+    $stmt = $conn->prepare($action_history_query);
+    $stmt->bind_param("i", $active_case['fraud_case_id']);
+    $stmt->execute();
+    $action_history = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+}
 
 // Prepare data for charts
 $donation_dates = [];
@@ -65,15 +92,24 @@ function getInitials($name) {
     return strtoupper(substr($parts[0], 0, 1) . (isset($parts[1]) ? substr($parts[1], 0, 1) : ''));
 }
 
-function getRiskBadge($level) {
+function getStatusBadgeClass($status) {
     $badges = [
-        'normal' => 'success',
-        'watch' => 'info',
-        'review' => 'warning',
-        'high' => 'danger',
-        'critical' => 'danger'
+        'active' => 'success',
+        'restricted' => 'warning',
+        'frozen' => 'info',
+        'blocked' => 'danger'
     ];
-    return $badges[$level] ?? 'secondary';
+    return $badges[$status] ?? 'secondary';
+}
+
+function getStatusIcon($status) {
+    $icons = [
+        'active' => 'check-circle-fill',
+        'restricted' => 'exclamation-triangle-fill',
+        'frozen' => 'snow',
+        'blocked' => 'x-circle-fill'
+    ];
+    return $icons[$status] ?? 'question-circle';
 }
 ?>
 
@@ -118,6 +154,35 @@ function getRiskBadge($level) {
             background: var(--card-pink);
             border-color: var(--accent-pink);
             color: var(--text-dark);
+        }
+        
+        .account-status-banner {
+            background: white;
+            border-radius: 20px;
+            padding: 1.5rem 2rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 15px rgba(255, 179, 179, 0.1);
+            border: 3px solid;
+        }
+        
+        .account-status-banner.status-active {
+            border-color: #28a745;
+            background: linear-gradient(135deg, #d4edda 0%, #f0f9f4 100%);
+        }
+        
+        .account-status-banner.status-restricted {
+            border-color: #ffc107;
+            background: linear-gradient(135deg, #fff3cd 0%, #fffbf0 100%);
+        }
+        
+        .account-status-banner.status-frozen {
+            border-color: #17a2b8;
+            background: linear-gradient(135deg, #d1ecf1 0%, #f0f9fb 100%);
+        }
+        
+        .account-status-banner.status-blocked {
+            border-color: #dc3545;
+            background: linear-gradient(135deg, #f8d7da 0%, #fcf0f1 100%);
         }
         
         .main-header {
@@ -264,7 +329,7 @@ function getRiskBadge($level) {
         }
         
         .btn-freeze {
-            background: linear-gradient(135deg, #fd7e14 0%, #e86d0d 100%);
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
             color: white;
         }
         
@@ -296,12 +361,38 @@ function getRiskBadge($level) {
             padding: 1rem 1.5rem;
         }
         
-        .case-note {
+        .action-history-item {
             background: white;
-            border-left: 4px solid var(--accent-pink);
+            border-left: 4px solid;
             border-radius: 8px;
-            padding: 1rem;
-            margin-bottom: 0.75rem;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        
+        .action-history-item.action-clear {
+            border-left-color: #28a745;
+        }
+        
+        .action-history-item.action-restrict {
+            border-left-color: #ffc107;
+        }
+        
+        .action-history-item.action-freeze {
+            border-left-color: #17a2b8;
+        }
+        
+        .action-history-item.action-block {
+            border-left-color: #dc3545;
+        }
+        
+        .action-badge {
+            display: inline-block;
+            padding: 0.4rem 1rem;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 0.875rem;
+            text-transform: uppercase;
         }
         
         .appeal-card {
@@ -317,23 +408,6 @@ function getRiskBadge($level) {
             border-radius: 50px;
             font-weight: 600;
         }
-        
-        .timeline-item {
-            position: relative;
-            padding-left: 2rem;
-            margin-bottom: 1rem;
-        }
-        
-        .timeline-item::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: var(--accent-pink);
-        }
     </style>
 </head>
 <body>
@@ -342,9 +416,9 @@ function getRiskBadge($level) {
             <i class="bi bi-arrow-left"></i> Back to Signals
         </a>
         
-        <?php if (isset($success_message)): ?>
+        <?php if (isset($_GET['success'])): ?>
             <div class="alert alert-success alert-custom">
-                <i class="bi bi-check-circle-fill"></i> <?= $success_message ?>
+                <i class="bi bi-check-circle-fill"></i> Action completed successfully and logged.
             </div>
         <?php endif; ?>
         
@@ -354,12 +428,50 @@ function getRiskBadge($level) {
             </div>
         <?php endif; ?>
 
+        <!-- Current Account Status Banner -->
+        <div class="account-status-banner status-<?= $sponsor['account_status'] ?>">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h3 class="mb-2">
+                        <i class="bi bi-<?= getStatusIcon($sponsor['account_status']) ?>"></i>
+                        Current Account Status: 
+                        <span class="badge bg-<?= getStatusBadgeClass($sponsor['account_status']) ?> badge-custom">
+                            <?= strtoupper($sponsor['account_status']) ?>
+                        </span>
+                    </h3>
+                    <p class="mb-0">
+                        <?php
+                        $status_descriptions = [
+                            'active' => 'Account is in good standing with full access to all features.',
+                            'restricted' => 'Account has donation limits applied due to risk concerns.',
+                            'frozen' => 'Account is temporarily suspended - all donations blocked.',
+                            'blocked' => 'Account is permanently banned from the platform.'
+                        ];
+                        echo $status_descriptions[$sponsor['account_status']] ?? 'Status information unavailable.';
+                        ?>
+                    </p>
+                </div>
+                <div class="col-md-4 text-end">
+                    <?php if ($sponsor['is_flagged']): ?>
+                        <div class="alert alert-danger mb-0">
+                            <i class="bi bi-flag-fill"></i> <strong>FLAGGED</strong><br>
+                            <small><?= htmlspecialchars($sponsor['flag_reason']) ?></small>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+
         <!-- Sponsor Profile Header -->
         <div class="main-header">
             <div class="row align-items-center">
                 <div class="col-md-6">
                     <div class="sponsor-profile">
+                        <div class="sponsor-avatar-large">
+                            <?= getInitials($sponsor['first_name'] . ' ' . $sponsor['last_name']) ?>
+                        </div>
                         <div>
+                            <h2 class="mb-2"><?= htmlspecialchars($sponsor['first_name'] . ' ' . $sponsor['last_name']) ?></h2>
                             <p class="text-muted mb-1">
                                 <i class="bi bi-envelope"></i> <?= htmlspecialchars($sponsor['email']) ?>
                             </p>
@@ -369,25 +481,12 @@ function getRiskBadge($level) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3">
-                    <div class="risk-score-display">
+                <div class="col-md-6 text-end">
+                    <div class="risk-score-display d-inline-block">
                         <small>Current Risk Score</small>
                         <h3><?= $risk['risk_score'] ?></h3>
                         <span class="badge bg-light text-dark"><?= strtoupper($risk['risk_level']) ?></span>
                     </div>
-                </div>
-                <div class="col-md-3">
-                    <?php if ($sponsor['is_flagged']): ?>
-                        <div class="alert alert-danger mb-0">
-                            <i class="bi bi-flag-fill"></i> <strong>FLAGGED</strong><br>
-                            <small><?= htmlspecialchars($sponsor['flag_reason']) ?></small>
-                        </div>
-                    <?php else: ?>
-                        <div class="alert alert-success mb-0">
-                            <i class="bi bi-check-circle-fill"></i> <strong>Not Flagged</strong><br>
-                            <small>Account in good standing</small>
-                        </div>
-                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -422,7 +521,6 @@ function getRiskBadge($level) {
                         </div>
                     </div>
 
-                    <!-- Donation Amount Chart -->
                     <div class="chart-container">
                         <canvas id="donationChart"></canvas>
                     </div>
@@ -480,6 +578,51 @@ function getRiskBadge($level) {
 
             <!-- Right Column: Signals, Case Info, Actions -->
             <div class="col-lg-4">
+                <!-- Action History -->
+                <div class="card-custom">
+                    <h4 class="section-title">
+                        <i class="bi bi-clock-history"></i> Action History
+                    </h4>
+                    
+                    <?php if (empty($action_history)): ?>
+                        <p class="text-muted">No actions taken yet.</p>
+                    <?php else: ?>
+                        <div style="max-height: 500px; overflow-y: auto;">
+                            <?php foreach ($action_history as $action): ?>
+                                <?php
+                                // Parse note to extract action type
+                                $note_text = $action['note'];
+                                $action_type = 'info';
+                                if (stripos($note_text, 'cleared') !== false) $action_type = 'clear';
+                                elseif (stripos($note_text, 'restricted') !== false) $action_type = 'restrict';
+                                elseif (stripos($note_text, 'frozen') !== false) $action_type = 'freeze';
+                                elseif (stripos($note_text, 'blocked') !== false) $action_type = 'block';
+                                
+                                $badge_color = [
+                                    'clear' => 'success',
+                                    'restrict' => 'warning',
+                                    'freeze' => 'info',
+                                    'block' => 'danger',
+                                    'info' => 'secondary'
+                                ];
+                                ?>
+                                <div class="action-history-item action-<?= $action_type ?>">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <span class="action-badge bg-<?= $badge_color[$action_type] ?> text-white">
+                                            <?= ucfirst($action_type) ?>
+                                        </span>
+                                        <small class="text-muted">
+                                            <?= date('M j, Y g:i A', strtotime($action['created_at'])) ?>
+                                        </small>
+                                    </div>
+                                    <p class="mb-2"><strong>Admin:</strong> <?= htmlspecialchars($action['first_name'] . ' ' . $action['last_name']) ?></p>
+                                    <p class="mb-0"><strong>Justification:</strong><br><?= nl2br(htmlspecialchars($action['note'])) ?></p>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
                 <!-- Fraud Signals -->
                 <div class="card-custom">
                     <h4 class="section-title">
@@ -525,26 +668,6 @@ function getRiskBadge($level) {
                     </div>
                 <?php endif; ?>
 
-                <!-- Case Notes -->
-                <?php if (!empty($case_notes)): ?>
-                    <div class="card-custom">
-                        <h4 class="section-title">
-                            <i class="bi bi-journal-text"></i> Case Notes
-                        </h4>
-                        <div style="max-height: 300px; overflow-y: auto;">
-                            <?php foreach ($case_notes as $note): ?>
-                                <div class="case-note">
-                                    <small class="text-muted">
-                                        <i class="bi bi-person"></i> <?= htmlspecialchars($note['admin_name']) ?> • 
-                                        <?= date('M j, Y g:i A', strtotime($note['created_at'])) ?>
-                                    </small>
-                                    <p class="mb-0 mt-1"><?= nl2br(htmlspecialchars($note['note'])) ?></p>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-                <?php endif; ?>
-
                 <!-- Pending Appeals -->
                 <?php if (!empty($appeals)): ?>
                     <div class="card-custom">
@@ -569,7 +692,7 @@ function getRiskBadge($level) {
                 <!-- Admin Actions -->
                 <div class="card-custom">
                     <h4 class="section-title">
-                        <i class="bi bi-shield-check"></i> Admin Actions
+                        <i class="bi bi-shield-check"></i> Take Admin Action
                     </h4>
                     
                     <form method="POST" onsubmit="return confirm('Are you sure you want to take this action? This will be logged and audited.');">
