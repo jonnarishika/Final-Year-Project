@@ -1,8 +1,8 @@
 <?php
 session_start();
 
-// Test data (remove when login is implemented)
-$_SESSION['user_id'] = 1;
+// Remove this test data line - it's overwriting real login sessions!
+// $_SESSION['user_id'] = 1;  // ← DELETED
 
 require_once __DIR__ . '/../db_config.php';
 
@@ -805,7 +805,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_sponsors') {
                 console.error('Invalid sponsor ID');
                 return;
             }
-            window.location.href = `sponsor_profile.php?sponsor_id=${sponsorId}`;
+            // ✅ CHANGED: Now redirects to sponsor_profile_staff.php instead of sponsor_profile.php
+            window.location.href = `sponsor_profile_staff.php?sponsor_id=${sponsorId}`;
         }
     </script>
 </body>

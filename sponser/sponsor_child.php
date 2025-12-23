@@ -3,14 +3,16 @@ require_once(__DIR__ . '/../razorpay-php/Razorpay.php');
 use Razorpay\Api\Api;
 session_start();
 require_once __DIR__ . '/../db_config.php';
+require_once __DIR__ . '/../includes/fraud_services.php';
+require_once __DIR__ . '/../includes/sponsor_access_check.php';
+$access_check = checkSponsorAccessRestrictions($conn, basename(__FILE__));
+$sponsor_id = $access_check['sponsor_id'];
 
-// Check if sponsor is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../signup_and_login/login_template.php");
     exit();
 }
 
-// Validate child_id
 if (!isset($_GET['child_id']) || !is_numeric($_GET['child_id'])) {
     die("Invalid child ID");
 }
@@ -18,7 +20,6 @@ if (!isset($_GET['child_id']) || !is_numeric($_GET['child_id'])) {
 $child_id = (int)$_GET['child_id'];
 $user_id = $_SESSION['user_id'];
 
-// FIXED: Fetch the actual sponsor_id from sponsors table
 $stmt = $conn->prepare("SELECT sponsor_id FROM sponsors WHERE user_id = ?");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
@@ -30,6 +31,11 @@ if (!$sponsor_data) {
 }
 
 $sponsor_id = $sponsor_data['sponsor_id'];
+
+// ⭐ CHECK FRAUD RESTRICTIONS
+$donation_status = canSponsorDonateDetailed($conn, $sponsor_id);
+$is_restricted = !$donation_status['can_donate'];
+$restriction_message = $donation_status['message'];
 
 // Fetch child details
 $stmt = $conn->prepare("
@@ -48,7 +54,6 @@ if (!$child) {
     die("Child not found");
 }
 
-// Fetch sponsor details
 $stmt = $conn->prepare("
     SELECT s.*, u.email, u.phone_no 
     FROM sponsors s 
@@ -62,7 +67,6 @@ $stmt->execute();
 $result = $stmt->get_result();
 $sponsor = $result->fetch_assoc();
 
-// Handle form submission
 $razorpay_order_id = null;
 $razorpay_amount = null;
 $donation_id = null;
@@ -72,70 +76,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $amount = filter_input(INPUT_POST, 'amount', FILTER_VALIDATE_FLOAT);
     $csrf_token = $_POST['csrf_token'] ?? '';
     
-    // Validate CSRF token
     if ($csrf_token !== ($_SESSION['csrf_token'] ?? '')) {
         $error = "Invalid request";
+    } elseif ($is_restricted) {
+        $error = $restriction_message;
     } elseif ($amount < 100) {
         $error = "Minimum donation amount is ₹100";
     } else {
-        try {
-            // Razorpay API credentials
-            $api_key = 'rzp_test_RiQdqG3QtpFjdt';
-            $api_secret = 'mMhzmW57NeJ7q3AWTUX37wKx';
-            $api = new Api($api_key, $api_secret);
-            
-            // Create Razorpay order
-            $orderData = [
-                'amount' => $amount * 100, // Convert to paise
-                'currency' => 'INR',
-                'receipt' => 'TEMP-' . time(),
-                'notes' => [
-                    'child_id' => $child_id,
-                    'sponsor_id' => $sponsor_id
-                ]
-            ];
-            
-            $razorpay_order = $api->order->create($orderData);
-            
-            // Extract order ID and amount properly
-            $order_id = $razorpay_order->id;
-            $razorpay_order_id = $order_id;
-            $razorpay_amount = $razorpay_order->amount;
-            
-            // Insert donation record with correct sponsor_id
-            $stmt = $conn->prepare("
-                INSERT INTO donations 
-                (sponsor_id, child_id, amount, razorpay_order_id, status, donation_date) 
-                VALUES (?, ?, ?, ?, 'Pending', NOW())
-            ");
-
-            $stmt->bind_param("iids", 
-                $sponsor_id,
-                $child_id,
-                $amount,
-                $order_id
-            );
-
-            if ($stmt->execute()) {
-                $donation_id = $conn->insert_id;
+        // ⭐ VALIDATE AMOUNT AGAINST RESTRICTIONS
+        $validation = validateDonationAmount($conn, $sponsor_id, $amount);
+        
+        if (!$validation['allowed']) {
+            $error = $validation['message'];
+        } else {
+            try {
+                $api_key = 'rzp_test_RiQdqG3QtpFjdt';
+                $api_secret = 'mMhzmW57NeJ7q3AWTUX37wKx';
+                $api = new Api($api_key, $api_secret);
                 
-                // ⭐ CRITICAL: Store order_id in session for failure tracking
-                $_SESSION['pending_order_id'] = $order_id;
-                $_SESSION['pending_donation_id'] = $donation_id;
+                $orderData = [
+                    'amount' => $amount * 100,
+                    'currency' => 'INR',
+                    'receipt' => 'TEMP-' . time(),
+                    'notes' => [
+                        'child_id' => $child_id,
+                        'sponsor_id' => $sponsor_id
+                    ]
+                ];
                 
-                error_log("🔵 Created order: " . $order_id . " | Donation ID: " . $donation_id);
-            } else {
-                throw new Exception("Failed to create donation record");
+                $razorpay_order = $api->order->create($orderData);
+                
+                $order_id = $razorpay_order->id;
+                $razorpay_order_id = $order_id;
+                $razorpay_amount = $razorpay_order->amount;
+                
+                $stmt = $conn->prepare("
+                    INSERT INTO donations 
+                    (sponsor_id, child_id, amount, razorpay_order_id, status, donation_date) 
+                    VALUES (?, ?, ?, ?, 'Pending', NOW())
+                ");
+
+                $stmt->bind_param("iids", 
+                    $sponsor_id,
+                    $child_id,
+                    $amount,
+                    $order_id
+                );
+
+                if ($stmt->execute()) {
+                    $donation_id = $conn->insert_id;
+                    $_SESSION['pending_order_id'] = $order_id;
+                    $_SESSION['pending_donation_id'] = $donation_id;
+                    
+                    error_log("🔵 Created order: " . $order_id . " | Donation ID: " . $donation_id);
+                } else {
+                    throw new Exception("Failed to create donation record");
+                }
+                
+            } catch (Exception $e) {
+                $error = "Payment processing error: " . $e->getMessage();
+                error_log("❌ Error creating order: " . $e->getMessage());
             }
-            
-        } catch (Exception $e) {
-            $error = "Payment processing error: " . $e->getMessage();
-            error_log("❌ Error creating order: " . $e->getMessage());
         }
     }
 }
 
-// Generate CSRF token
 if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
@@ -184,6 +189,47 @@ if (!isset($_SESSION['csrf_token'])) {
             margin: 0 auto;
             position: relative;
             z-index: 1;
+        }
+
+        /* ⭐ FRAUD RESTRICTION BANNER */
+        .restriction-banner {
+            background: rgba(239, 68, 68, 0.15);
+            backdrop-filter: blur(15px);
+            border: 2px solid rgba(239, 68, 68, 0.4);
+            border-radius: 20px;
+            padding: 1.5rem 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(239, 68, 68, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .restriction-banner.warning {
+            background: rgba(245, 158, 11, 0.15);
+            border-color: rgba(245, 158, 11, 0.4);
+        }
+
+        .restriction-icon {
+            font-size: 2rem;
+            flex-shrink: 0;
+        }
+
+        .restriction-text {
+            flex: 1;
+        }
+
+        .restriction-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #2d3436;
+            margin-bottom: 0.25rem;
+        }
+
+        .restriction-message {
+            font-size: 0.95rem;
+            color: #2d3436;
+            font-weight: 500;
         }
 
         .header {
@@ -348,6 +394,12 @@ if (!isset($_SESSION['csrf_token'])) {
             cursor: not-allowed;
         }
 
+        input:disabled {
+            background: rgba(0, 0, 0, 0.1);
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
         .amount-suggestions {
             display: flex;
             gap: 10px;
@@ -366,9 +418,14 @@ if (!isset($_SESSION['csrf_token'])) {
             transition: all 0.3s;
         }
 
-        .amount-btn:hover {
+        .amount-btn:hover:not(:disabled) {
             background: rgba(255, 255, 255, 0.4);
             transform: translateY(-2px);
+        }
+
+        .amount-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .amount-btn.active {
@@ -412,14 +469,15 @@ if (!isset($_SESSION['csrf_token'])) {
             box-shadow: 0 4px 15px rgba(108, 92, 231, 0.4);
         }
 
-        .checkout-btn:hover {
+        .checkout-btn:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(108, 92, 231, 0.5);
         }
 
         .checkout-btn:disabled {
-            opacity: 0.6;
+            opacity: 0.5;
             cursor: not-allowed;
+            background: rgba(0, 0, 0, 0.2);
         }
 
         .agreement {
@@ -442,6 +500,17 @@ if (!isset($_SESSION['csrf_token'])) {
             padding: 15px;
             border-radius: 10px;
             margin-bottom: 20px;
+        }
+
+        .limit-info {
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid rgba(245, 158, 11, 0.4);
+            color: #d97706;
+            padding: 12px;
+            border-radius: 10px;
+            margin-top: 10px;
+            font-size: 14px;
+            font-weight: 600;
         }
 
         @media (max-width: 968px) {
@@ -468,6 +537,24 @@ if (!isset($_SESSION['csrf_token'])) {
                 <div></div>
             </div>
         </div>
+
+        <?php if ($is_restricted): ?>
+            <div class="restriction-banner">
+                <div class="restriction-icon">🚫</div>
+                <div class="restriction-text">
+                    <div class="restriction-title">Donations Currently Disabled</div>
+                    <div class="restriction-message"><?php echo htmlspecialchars($restriction_message); ?></div>
+                </div>
+            </div>
+        <?php elseif ($donation_status['status'] === 'restricted'): ?>
+            <div class="restriction-banner warning">
+                <div class="restriction-icon">⚠️</div>
+                <div class="restriction-text">
+                    <div class="restriction-title">Account Restricted</div>
+                    <div class="restriction-message"><?php echo htmlspecialchars($restriction_message); ?></div>
+                </div>
+            </div>
+        <?php endif; ?>
 
         <?php if (isset($error)): ?>
             <div class="error"><?php echo htmlspecialchars($error); ?></div>
@@ -507,14 +594,24 @@ if (!isset($_SESSION['csrf_token'])) {
                                    name="amount" 
                                    id="amount" 
                                    min="100" 
+                                   <?php if ($donation_status['remaining_limit'] !== null): ?>
+                                   max="<?php echo $donation_status['remaining_limit']; ?>"
+                                   <?php endif; ?>
                                    step="1" 
                                    placeholder="Enter amount"
-                                   required>
+                                   <?php echo $is_restricted ? 'disabled' : 'required'; ?>>
+                            
+                            <?php if ($donation_status['status'] === 'restricted' && $donation_status['remaining_limit'] !== null): ?>
+                                <div class="limit-info">
+                                    ⚠️ Maximum: ₹<?php echo number_format($donation_status['remaining_limit'], 2); ?> (Monthly limit applies)
+                                </div>
+                            <?php endif; ?>
+                            
                             <div class="amount-suggestions">
-                                <button type="button" class="amount-btn" onclick="setAmount(500)">₹500</button>
-                                <button type="button" class="amount-btn" onclick="setAmount(1000)">₹1000</button>
-                                <button type="button" class="amount-btn" onclick="setAmount(2500)">₹2500</button>
-                                <button type="button" class="amount-btn" onclick="setAmount(5000)">₹5000</button>
+                                <button type="button" class="amount-btn" onclick="setAmount(500)" <?php echo $is_restricted ? 'disabled' : ''; ?>>₹500</button>
+                                <button type="button" class="amount-btn" onclick="setAmount(1000)" <?php echo $is_restricted ? 'disabled' : ''; ?>>₹1000</button>
+                                <button type="button" class="amount-btn" onclick="setAmount(2500)" <?php echo $is_restricted ? 'disabled' : ''; ?>>₹2500</button>
+                                <button type="button" class="amount-btn" onclick="setAmount(5000)" <?php echo $is_restricted ? 'disabled' : ''; ?>>₹5000</button>
                             </div>
                         </div>
                     </div>
@@ -566,16 +663,22 @@ if (!isset($_SESSION['csrf_token'])) {
                     <span id="summaryTotal">₹0</span>
                 </div>
 
-                <button type="submit" form="donationForm" class="checkout-btn" id="payBtn">
-                    Proceed to Pay →
+                <button type="submit" 
+                        form="donationForm" 
+                        class="checkout-btn" 
+                        id="payBtn"
+                        <?php echo $is_restricted ? 'disabled' : ''; ?>>
+                    <?php echo $is_restricted ? 'Donations Disabled' : 'Proceed to Pay →'; ?>
                 </button>
 
+                <?php if (!$is_restricted): ?>
                 <div class="agreement">
                     <input type="checkbox" id="agreeTerms" required>
                     <label for="agreeTerms" style="text-transform: none; font-weight: normal;">
                         By confirming this order, I accept the terms of the user agreement
                     </label>
                 </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -585,12 +688,18 @@ if (!isset($_SESSION['csrf_token'])) {
         let razorpayOrderId = <?php echo $razorpay_order_id ? "'" . htmlspecialchars($razorpay_order_id) . "'" : "null"; ?>;
         let razorpayAmount = <?php echo $razorpay_amount ? $razorpay_amount : "null"; ?>;
         let apiKey = '<?php echo 'rzp_test_RiQdqG3QtpFjdt'; ?>';
+        let maxAmount = <?php echo $donation_status['remaining_limit'] !== null ? $donation_status['remaining_limit'] : 'null'; ?>;
 
         if (razorpayOrderId) {
             console.log("Razorpay Order ID ready:", razorpayOrderId);
         }
 
         function setAmount(value) {
+            if (maxAmount !== null && value > maxAmount) {
+                alert('Amount exceeds your remaining monthly limit of ₹' + maxAmount.toFixed(2));
+                return;
+            }
+            
             document.getElementById('amount').value = value;
             updateSummary();
             
@@ -606,7 +715,13 @@ if (!isset($_SESSION['csrf_token'])) {
             document.getElementById('summaryTotal').textContent = '₹' + amount;
         }
 
-        document.getElementById('amount').addEventListener('input', updateSummary);
+        document.getElementById('amount').addEventListener('input', function() {
+            if (maxAmount !== null && parseFloat(this.value) > maxAmount) {
+                this.value = maxAmount;
+                alert('Amount exceeds your remaining monthly limit of ₹' + maxAmount.toFixed(2));
+            }
+            updateSummary();
+        });
 
         document.getElementById('donationForm').addEventListener('submit', function(e) {
             if (!document.getElementById('agreeTerms').checked) {
